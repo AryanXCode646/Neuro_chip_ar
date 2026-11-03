@@ -272,7 +272,8 @@ def test_recurrent_online_stdp_pre_before_post_potentiation():
         tau_syn=1.0,
         dt=1.0,
         enable_stdp=True,
-        stdp_rec_params={"a_plus": 0.1, "a_minus": 0.05, "w_max": 10.0},
+        stdp_input_params={"w_max": 500.0},
+        stdp_rec_params={"w_max": 10.0},
         neuron_params={"v_rest": -65.0, "v_reset": -65.0, "v_threshold": -50.0, "refractory_period": 0.0},
     )
 
@@ -320,8 +321,8 @@ def test_recurrent_input_validation():
 
 def test_recurrent_network_determinism():
     """Identical inputs must yield bit-for-bit identical trajectories."""
-    w_in = np.array([[5.0, 2.0], [1.0, 4.0]])
-    w_rec = np.array([[0.0, 3.0], [3.0, 0.0]])
+    w_in = np.array([[0.5, 0.2], [0.1, 0.4]])
+    w_rec = np.array([[0.0, 0.3], [0.3, 0.0]])
 
     net1 = RecurrentSpikingNetwork(2, 2, w_in, w_rec, enable_stdp=True)
     net2 = RecurrentSpikingNetwork(2, 2, w_in, w_rec, enable_stdp=True)

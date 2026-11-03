@@ -46,6 +46,7 @@ class LIFNeuron:
         dt: float = 1.0,
         refractory_period: float = 5.0,
     ) -> None:
+        # Validate parameters
         if dt <= 0.0:
             raise ValueError(f"Simulation timestep dt must be positive, got {dt}")
         if tau_m <= 0.0:
@@ -65,6 +66,10 @@ class LIFNeuron:
         self.dt = float(dt)
         self.refractory_period = float(refractory_period)
 
+        # Euler stability condition for LIF: 0 < dt / tau_m < 2
+        stability_ratio = self.dt / self.tau_m
+        if not (0.0 < stability_ratio < 2.0):
+            raise ValueError(f"Euler stability condition violated: dt/tau_m = {stability_ratio:.3f} not in (0, 2)")
         self.v = self.v_rest
         self.refractory_time_left = 0.0
 

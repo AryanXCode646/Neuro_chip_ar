@@ -95,6 +95,26 @@ class RecurrentSpikingNetwork:
         if np.any(w_rec < 0.0):
             raise ValueError("Recurrent weights must be non-negative in this milestone")
 
+        # Validate STDP bounds if STDP is enabled
+        if enable_stdp:
+            in_cfg = stdp_input_params.copy() if stdp_input_params else {}
+            rec_cfg = stdp_rec_params.copy() if stdp_rec_params else {}
+            # Determine bounds, default to [0.0, 1.0] when not specified
+            w_min_in = in_cfg.get("w_min", 0.0)
+            w_max_in = in_cfg.get("w_max", 1.0)
+            w_min_rec = rec_cfg.get("w_min", 0.0)
+            w_max_rec = rec_cfg.get("w_max", 1.0)
+            # Validate initial weight matrices against bounds
+            if np.any(w_in < w_min_in) or np.any(w_in > w_max_in):
+                raise ValueError(
+                    f"Initial input_weights contain values outside configured STDP bounds [{w_min_in}, {w_max_in}]"
+                )
+            if np.any(w_rec < w_min_rec) or np.any(w_rec > w_max_rec):
+                raise ValueError(
+                    f"Initial recurrent_weights contain values outside configured STDP bounds "
+                    f"[{w_min_rec}, {w_max_rec}]"
+                )
+
         self.n_input = int(n_input)
         self.n_neurons = int(n_neurons)
         self.input_weights = np.copy(w_in)
@@ -113,11 +133,10 @@ class RecurrentSpikingNetwork:
         self.enable_stdp = bool(enable_stdp)
         if self.enable_stdp:
             in_cfg = stdp_input_params.copy() if stdp_input_params else {}
-            in_cfg.setdefault("dt", self.dt)
-            self.stdp_input = PairSTDP(n_input=self.n_input, n_output=self.n_neurons, **in_cfg)
-
             rec_cfg = stdp_rec_params.copy() if stdp_rec_params else {}
+            in_cfg.setdefault("dt", self.dt)
             rec_cfg.setdefault("dt", self.dt)
+            self.stdp_input = PairSTDP(n_input=self.n_input, n_output=self.n_neurons, **in_cfg)
             self.stdp_rec = PairSTDP(n_input=self.n_neurons, n_output=self.n_neurons, **rec_cfg)
         else:
             self.stdp_input = None

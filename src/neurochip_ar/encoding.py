@@ -81,9 +81,11 @@ def poisson_rate_encoder(
     else:
         raise ValueError(f"inputs must be 1D or 2D, got shape {arr.shape}")
 
-    # Spike probability per bin: p = r * dt = (normalized_input * r_max) * dt
-    # Clipped to [0, 1] to guarantee valid Bernoulli probability
-    p_spike = np.clip(rate_matrix * (r_max * dt), 0.0, 1.0)
+    # Exact Poisson event probability: p = 1 - exp(-rate * dt) where rate = normalized_input * r_max
+    # Use numerically stable np.expm1 for -exp(-x)
+    p_spike = -np.expm1(-rate_matrix * (r_max * dt))
+    # Ensure probabilities are within [0, 1]
+    np.clip(p_spike, 0.0, 1.0, out=p_spike)
 
     rng = np.random.default_rng(seed)
     random_draws = rng.random(size=p_spike.shape)
