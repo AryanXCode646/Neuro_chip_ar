@@ -1,176 +1,290 @@
 # NeuroChip AR
 
-**Software-first brain-inspired AI and neuromorphic computing prototype**
+**Software-first brain-inspired neuromorphic computing prototype**
 
 ---
 
 ## Overview
-NeuroChip AR is an open-source project exploring software-based neuromorphic computing and spiking neural networks (SNNs). The project implements biologically inspired neuron dynamics, synaptic connectivity, and local plasticity mechanisms in pure Python, establishing a verifiable computational foundation before considering embedded or hardware implementations.
+
+NeuroChip AR is an open-source project building a biologically grounded spiking neural network (SNN) foundation in pure Python. The goal is to establish a reproducible, testable computational substrate before considering any embedded or hardware implementation.
+
+The project is **not** a simulation of the human brain and does not claim to replicate biological cognition. It implements well-defined mathematical models of neuron dynamics, synaptic plasticity, and temporal information processing, verifiable against analytical solutions and reproducible across runs.
+
+---
+
+## Architecture
+
+```
+Neuro_chip_ar/
+├── src/neurochip_ar/
+│   ├── __init__.py                   # Public package exports
+│   ├── neuron.py                     # Leaky Integrate-and-Fire neuron model
+│   ├── encoding.py                   # Seeded Poisson rate encoder
+│   ├── network.py                    # Feed-forward SNN with synaptic decay
+│   ├── stdp.py                       # Pair-based STDP plasticity rule
+│   ├── recurrent.py                  # Recurrent SNN with delayed feedback + online STDP
+│   └── temporal_features.py          # Temporal feature extraction utilities  [new]
+├── examples/
+│   ├── basic_neurochip_demo.py       # Feed-forward & offline STDP demo
+│   ├── recurrent_neurochip_demo.py   # Recurrent network & online STDP demo
+│   └── temporal_pattern_classification.py  # Temporal learning experiment  [new]
+├── tests/
+│   ├── test_neuron.py                # LIF dynamics & refractory tests
+│   ├── test_encoding.py              # Encoder dimensions & reproducibility
+│   ├── test_network.py               # Feed-forward propagation & reset
+│   ├── test_stdp.py                  # STDP LTP, LTD & weight-bound tests
+│   ├── test_recurrent.py             # Recurrent delay, feedback & STDP tests
+│   ├── test_recurrent_stdp_bounds.py # STDP weight-bound edge cases
+│   ├── test_stdp_configuration.py    # Independent STDP component configuration  [new]
+│   └── test_temporal_features.py     # Temporal feature extraction tests  [new]
+├── artifacts/
+│   ├── basic_neurochip_demo.png      # Feed-forward visualisation
+│   ├── recurrent_neurochip_demo.png  # Recurrent network visualisation
+│   ├── confusion_matrix.png          # Test-set confusion matrix (full-STDP)  [new]
+│   ├── temporal_classification_results.csv   # Per-seed accuracy table  [new]
+│   └── temporal_classification_report.txt    # Human-readable summary  [new]
+├── run_all.sh                        # Portable experiment runner
+├── conftest.py                       # pytest configuration
+└── pyproject.toml                    # Build & dependency configuration
+```
 
 ---
 
 ## Core Components
 
-### 1. LIF Neuron (`neurochip_ar.neuron`)
-Implements leaky integrate-and-fire membrane dynamics using forward Euler integration:
+### 1. LIF Neuron — `neurochip_ar.neuron`
+
+Implements leaky integrate-and-fire membrane dynamics via forward Euler integration:
+
 $$\frac{dV}{dt} = \frac{V_{\text{rest}} - V + R \cdot I}{\tau_m}$$
-- Resting potential ($V_{\text{rest}}$), reset potential ($V_{\text{reset}}$), and spike threshold ($V_{\text{threshold}}$).
-- Absolute refractory period clamping membrane potential.
-- Strict parameter and boundary validation.
 
-### 2. Poisson Rate Encoding (`neurochip_ar.encoding`)
-- Converts continuous normalized inputs in $[0, 1]$ into binary spike trains.
-- Seeded pseudo-random number generator for deterministic reproducibility.
-- Supports 1D channel inputs and 2D time-varying inputs.
+- Resting potential, reset potential, and spike threshold (all in mV).
+- Absolute refractory period — membrane is clamped at $V_{\text{reset}}$ and cannot spike.
+- Euler stability check: rejects configurations where $dt / \tau_m \notin (0, 2)$.
+- `params` property for safe, typed introspection of neuron configuration:
+  ```python
+  neuron.params["v_rest"]       # -65.0
+  neuron.params["v_threshold"]  # -50.0
+  neuron.params["tau_m"]        # 20.0
+  ```
+- `reset()` restores membrane potential to `v_rest` and clears refractory state.
 
-### 3. Feed-Forward Spiking Network (`neurochip_ar.network`)
-- Connects input spike trains to output LIF neurons through a weight matrix of shape `(n_output, n_input)`.
-- Exponentially decaying synaptic current dynamics:
-$$I_{\text{syn}}(t) = I_{\text{syn}}(t-1) \cdot \exp\left(-\frac{dt}{\tau_{\text{syn}}}\right) + W \cdot S_{\text{in}}(t)$$
-- Deterministic simulation recording membrane potentials, synaptic currents, and output spikes.
+### 2. Poisson Rate Encoder — `neurochip_ar.encoding`
 
-### 4. Pair-based STDP (`neurochip_ar.stdp`)
-- Implements spike-timing-dependent plasticity using presynaptic and postsynaptic eligibility traces.
-- Pre-before-post spike timing triggers Long-Term Potentiation (LTP).
-- Post-before-pre spike timing triggers Long-Term Depression (LTD).
-- Configurable learning rates, decay time constants, and hard weight boundaries $[w_{\text{min}}, w_{\text{max}}]$.
-- Documented simultaneous spike convention.
+Converts continuous firing rates $r \in [0, 1]$ into binary spike trains via a seeded Bernoulli process.
 
-### 5. Recurrent Spiking Network & Online STDP (`neurochip_ar.recurrent`) *(v0.2)*
-- Connects external inputs ($x[t]$) and recurrent outputs ($y[t-1]$) to a layer of LIF neurons.
-- Explicit one-timestep delayed recurrent feedback without instantaneous self-connections:
-$$I_{\text{syn}}(t) = I_{\text{syn}}(t-1) \cdot \exp\left(-\frac{dt}{\tau_{\text{syn}}}\right) + W_{\text{in}} \cdot x[t] + W_{\text{rec}} \cdot y[t-1]$$
-- Strictly enforces non-negative recurrent weights and zero diagonal (no instantaneous self-excitation).
-- **Online STDP**: updates both input and recurrent weight matrices inside the simulation loop at every timestep:
-  - Input weights updated via pairings between $x[t]$ and $y[t]$.
-  - Recurrent weights updated via pairings between delayed recurrent spikes $y[t-1]$ and current spikes $y[t]$.
-  - Updated weights immediately influence subsequent network timesteps.
-  - State resets clear membrane voltages and synaptic currents while preserving learned weights.
+- Deterministic across runs given the same seed.
+- Supports 1-D channel inputs and 2-D time-varying inputs.
+
+### 3. Feed-Forward Spiking Network — `neurochip_ar.network`
+
+Connects input spike trains to a layer of LIF neurons through a weight matrix `(n_output, n_input)`.
+
+Synaptic current dynamics with exponential decay:
+
+$$I_{\text{syn}}(t) = \alpha \cdot I_{\text{syn}}(t-1) + W \cdot S_{\text{in}}(t), \quad \alpha = e^{-dt/\tau_{\text{syn}}}$$
+
+### 4. Pair-based STDP — `neurochip_ar.stdp`
+
+Implements spike-timing-dependent plasticity using eligibility traces:
+
+| Spike order | Effect | Rule |
+|---|---|---|
+| Pre before post | LTP (strengthening) | $\Delta w \propto A_+ \cdot x_{\text{pre}}$ |
+| Post before pre | LTD (weakening) | $\Delta w \propto -A_- \cdot x_{\text{post}}$ |
+
+- Configurable learning rates ($A_+$, $A_-$), trace time constants ($\tau_+$, $\tau_-$), and hard weight bounds $[w_{\min}, w_{\max}]$.
+- Weights are clamped to bounds after every update.
+
+### 5. Recurrent Spiking Network — `neurochip_ar.recurrent`
+
+Extends the feed-forward model with one-timestep delayed recurrent feedback:
+
+$$I_{\text{syn}}(t) = \alpha \cdot I_{\text{syn}}(t-1) + W_{\text{in}} \cdot x[t] + W_{\text{rec}} \cdot y[t-1]$$
+
+- Zero diagonal enforced — no instantaneous self-connections.
+- Non-negative recurrent weights only (excitatory connections at this milestone).
+- **Independent STDP components**: `stdp_input` and `stdp_rec` are constructed separately and only when their respective learning rates are strictly positive. Zero or negative rates leave the attribute as `None`.
+
+```python
+# Input-only STDP — recurrent weights stay fixed
+net = RecurrentSpikingNetwork(
+    ...,
+    enable_stdp=True,
+    stdp_input_params={"a_plus": 0.01, "a_minus": 0.012},
+    stdp_rec_params=None,   # or omit entirely
+)
+# net.stdp_input is a PairSTDP instance
+# net.stdp_rec  is None
+```
+
+- `reset()` clears membrane potentials, synaptic currents, previous spikes, and STDP traces — **without** touching learned weights.
+- `run(spikes, record_weight_history=True)` returns a dict with `spikes`, `voltages`, `i_syn`, and optionally `weight_history`.
+
+### 6. Temporal Feature Extraction — `neurochip_ar.temporal_features` *(v0.3)*
+
+Three deterministic feature extractors for spike-train analysis:
+
+| Function | Description | Output shape |
+|---|---|---|
+| `extract_total(spikes)` | Total spike count per neuron | `(n_neurons,)` |
+| `extract_bins(spikes, bins=4)` | Concatenated binned spike counts | `(n_neurons × bins,)` |
+| `extract_latency(spikes)` | First-spike latency per neuron; silent neurons get `T` | `(n_neurons,)` |
+
+All three functions accept either:
+- A raw spike matrix `np.ndarray` of shape `(T, n_neurons)`.
+- A `(network, spikes_input)` pair — the network is reset before each sample, transient state is cleared, but learned weights are preserved.
 
 ---
 
-## Offline vs. Online STDP vs. Supervised Learning
+## Temporal Pattern Classification Experiment *(v0.3.2)*
 
-| Mechanism | Update Frequency | Weight Effect | Learning Signal |
+`examples/temporal_pattern_classification.py` demonstrates a complete temporal learning pipeline:
+
+### Dataset
+- **Task**: Distinguish which input channel fires first in a Poisson spike train.
+- **Size**: 200 samples per class → 400 total.
+- **Split**: Stratified 70 / 15 / 15:
+
+| Partition | Class 0 | Class 1 | Total |
 |---|---|---|---|
-| **Offline STDP** | Post-simulation | Evaluated over recorded spike histories | Local spike timing |
-| **Online STDP** | Per simulation timestep | Dynamically influences subsequent steps in real time | Local spike timing |
-| **Supervised Learning** *(Future)* | Epoch / batch | Optimizes loss function via surrogate gradients | Global task target / labels |
+| Training | 140 | 140 | 280 |
+| Validation | 30 | 30 | 60 |
+| Testing | 30 | 30 | 60 |
 
----
+- Deterministic via fixed seeds; no cross-partition overlap.
 
-## Repository Structure
+### Evaluated configurations
+- **Fixed weights** — no STDP; random initialisation.
+- **Input-STDP** — STDP applied to input synapses only.
+- **Full STDP** — STDP on both input and recurrent synapses.
+- **Raw baseline** — time-binned input rates, no network.
 
-```
-Neuro_chip_ar/
-├── pyproject.toml                     # Project configuration and dependencies
-├── README.md                          # Project documentation
-├── src/
-│   └── neurochip_ar/
-│       ├── __init__.py                # Package exports
-│       ├── neuron.py                  # Leaky Integrate-and-Fire neuron model
-│       ├── encoding.py                # Seeded Poisson rate encoder
-│       ├── network.py                 # Feed-forward SNN with synaptic current decay
-│       ├── stdp.py                    # Pair-based STDP learning rule
-│       └── recurrent.py               # Recurrent SNN with delayed feedback and online STDP
-├── examples/
-│   ├── basic_neurochip_demo.py        # Feed-forward SNN & STDP demonstration
-│   └── recurrent_neurochip_demo.py    # Recurrent network & online STDP demonstration
-├── tests/
-│   ├── test_neuron.py                 # LIF dynamics & refractory tests
-│   ├── test_encoding.py               # Encoder dimensions & reproducibility tests
-│   ├── test_network.py                # Feed-forward propagation & reset tests
-│   ├── test_stdp.py                   # STDP LTP, LTD & boundary tests
-│   └── test_recurrent.py              # Recurrent delay, feedback & online STDP tests
-└── artifacts/
-    ├── basic_neurochip_demo.png        # Feed-forward simulation visualization
-    └── recurrent_neurochip_demo.png    # Recurrent network & online STDP visualization
-```
+### Feature representations
+- Total spike counts.
+- Binned spike counts (4 windows).
+- First-spike latency.
+
+### Protocol
+- Train STDP on training partition only.
+- Freeze STDP during evaluation.
+- Reset transient network state between independent samples.
+- Evaluate on held-out test set.
+- Repeat across 10 fixed seeds.
+
+### Generated artifacts
+
+| File | Description |
+|---|---|
+| `artifacts/temporal_classification_results.csv` | Accuracy per seed & configuration |
+| `artifacts/temporal_classification_report.txt` | Human-readable summary |
+| `artifacts/confusion_matrix.png` | Test-set confusion matrix (full-STDP config) |
 
 ---
 
 ## Setup & Installation
 
-Requirements: Python 3.10+ (tested on Python 3.12 and 3.14).
+Requirements: **Python 3.10+** (tested on 3.12 and 3.14).
 
 ```bash
-# Clone the repository
-git clone https://github.com/StellarResearch/Neuro_chip_ar.git
-cd Neuro_chip_ar
+# Clone the canonical repository
+git clone https://github.com/StellarResearch/Neuro-Chip-AR.git
+cd Neuro-Chip-AR
 
 # Create and activate a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install the package and dependencies in editable mode
+# Install in editable mode with dev dependencies
 pip install -e ".[dev]"
 ```
 
 ---
 
-## Running the Demonstrations
+## Running the Experiments
 
-### 1. Basic Feed-Forward & STDP Demo
+### All experiments (portable runner)
 ```bash
+bash run_all.sh
+```
+Automatically resolves the repository root, prefers `.venv/bin/python`, falls back to system `python3`, checks required packages, and runs all three scripts. Stops immediately on any error (`set -euo pipefail`).
+
+### Individual scripts
+```bash
+# Feed-forward SNN & offline STDP demo
 python examples/basic_neurochip_demo.py
-```
-- Simulates feed-forward integration through LIF output neurons.
-- Executes controlled STDP pairing across spike timing delays ($\Delta t$).
-- Saves 4-panel analysis plot to `artifacts/basic_neurochip_demo.png`.
 
-### 2. Recurrent Network & Online STDP Demo
-```bash
+# Recurrent network & online STDP demo
 python examples/recurrent_neurochip_demo.py
+
+# Temporal pattern classification experiment
+python examples/temporal_pattern_classification.py
 ```
-- Simulates external Poisson inputs driving recurrent LIF neurons.
-- Demonstrates one-timestep delayed feedback in a recurrent ring topology.
-- Performs online STDP weight adaptation at every timestep.
-- Saves raster plots, membrane potentials, and weight trajectories to `artifacts/recurrent_neurochip_demo.png`.
 
 ---
 
-## Testing & Verification
+## Testing
 
-The test suite covers unit dynamics, boundary conditions, parameter validation, and end-to-end simulation pipelines:
+The test suite covers unit dynamics, boundary conditions, parameter validation, end-to-end simulation pipelines, and temporal feature correctness.
 
 ```bash
-# Run automated test suite
+# Run full test suite
 python -m pytest -v
 
-# Run linter and formatting checks
-ruff check .
-ruff format --check .
+# Run focused test suites
+pytest tests/test_stdp_configuration.py -v   # STDP configuration correctness
+pytest tests/test_temporal_features.py -v    # Temporal feature extraction
+
+# Lint and format checks
+ruff check src/neurochip_ar tests examples
+ruff format --check src/neurochip_ar tests examples
 ```
 
----
-
-## Status and Scope
-
-### Current Implementation (v0.2)
-- Numerical Leaky Integrate-and-Fire neuron with forward Euler integration and configurable refractory period.
-- Deterministic Poisson rate encoding with reproducible seeds.
-- Feed-forward spiking network with exponential synaptic current decay.
-- Recurrent spiking network with one-timestep delayed feedback and zero diagonal self-connection constraint.
-- Pair-based Spike-Timing-Dependent Plasticity (STDP) with eligibility traces and hard weight clamping.
-- Online STDP learning executed inside the simulation timestep loop for both input and recurrent connections.
-- Comprehensive test suite (30 automated tests passing).
-- Reproducible demonstrations with Matplotlib visualizations.
-
-### Known Limitations
-- Recurrent connections are currently excitatory-only (non-negative weights); inhibitory plasticity is planned for future milestones.
-- Plasticity is local pair-based STDP without triplet interactions or homeostatic normalization.
-- Pure Python and NumPy execution without hardware acceleration.
+**Current status: 48 tests, all passing.**
 
 ---
 
-## Development Roadmap
+## Learning Mode Comparison
 
-- [x] **Milestone 0.1**: Scaffold, LIF neuron, Poisson encoding, feed-forward network, pair-based STDP.
-- [x] **Milestone 0.2**: Recurrent network architecture, one-step delayed feedback, online STDP.
-- [ ] **Milestone 0.3**: Temporal spike encoding schemes (latency coding, phase encoding) and lateral inhibition.
-- [ ] **Milestone 0.4**: Surrogate gradient learning integration for supervised SNN tasks.
-- [ ] **Milestone 0.5**: Benchmarking on standard neuromorphic datasets.
-- [ ] **Long-term**: Lightweight embedded C/C++ inference runtime and FPGA acceleration exploration.
+| Mechanism | Update trigger | Weight effect | Learning signal |
+|---|---|---|---|
+| **Offline STDP** | Post-simulation | Evaluated over recorded histories | Local spike timing |
+| **Online STDP** (input) | Every timestep | Updates input weights in real time | Local spike timing |
+| **Online STDP** (recurrent) | Every timestep | Updates recurrent weights in real time | Local spike timing |
+| **Supervised (future)** | Epoch / batch | Optimises global loss | Task labels |
+
+---
+
+## Current Status — v0.3.2
+
+### Implemented
+- Forward Euler LIF neuron with absolute refractory period and stability validation.
+- Deterministic Poisson rate encoder.
+- Feed-forward SNN with exponential synaptic current decay.
+- Recurrent SNN with one-timestep delayed feedback and zero-diagonal constraint.
+- Pair-based STDP with independent guards for input and recurrent synapses.
+- Temporal feature extraction module (`total`, `binned`, `latency`).
+- Stratified temporal pattern classification experiment with 10-seed evaluation.
+- Portable experiment runner (`run_all.sh`).
+- 48 automated tests (all passing).
+
+### Known limitations
+- Recurrent connections are excitatory-only; inhibitory populations are not yet implemented.
+- Plasticity is pair-based STDP only — no triplet interactions, homeostatic normalisation, or short-term facilitation/depression.
+- Pure Python and NumPy; no GPU, FPGA, or hardware acceleration.
+- Temporal classification accuracy is near chance on the current synthetic task — STDP alone is insufficient for this problem without additional mechanisms.
+
+---
+
+## Roadmap
+
+- [x] **v0.1** — LIF neuron, Poisson encoding, feed-forward network, pair-based STDP.
+- [x] **v0.2** — Recurrent network, one-step delayed feedback, online STDP.
+- [x] **v0.3** — Temporal feature extraction, stratified experiment, independent STDP configuration.
+- [ ] **v0.4** — Excitatory / inhibitory populations, sparse connectivity, homeostatic regulation.
+- [ ] **v0.5** — Surrogate-gradient supervised learning.
+- [ ] **v0.6** — Benchmarking on standard neuromorphic datasets (N-MNIST, SHD).
+- [ ] **Long-term** — Lightweight C/C++ inference runtime; FPGA exploration.
 
 ---
 
