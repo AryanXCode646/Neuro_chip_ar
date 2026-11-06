@@ -132,12 +132,32 @@ class RecurrentSpikingNetwork:
 
         self.enable_stdp = bool(enable_stdp)
         if self.enable_stdp:
-            in_cfg = stdp_input_params.copy() if stdp_input_params else {}
-            rec_cfg = stdp_rec_params.copy() if stdp_rec_params else {}
-            in_cfg.setdefault("dt", self.dt)
-            rec_cfg.setdefault("dt", self.dt)
-            self.stdp_input = PairSTDP(n_input=self.n_input, n_output=self.n_neurons, **in_cfg)
-            self.stdp_rec = PairSTDP(n_input=self.n_neurons, n_output=self.n_neurons, **rec_cfg)
+            # Input STDP: create if config provided and learning rates are positive (or defaults used)
+            if stdp_input_params is not None:
+                in_cfg = stdp_input_params.copy()
+                a_plus_in = in_cfg.get("a_plus")
+                a_minus_in = in_cfg.get("a_minus")
+                # Disable if explicit zero or negative rates are given
+                if (a_plus_in is not None and a_plus_in <= 0) or (a_minus_in is not None and a_minus_in <= 0):
+                    self.stdp_input = None
+                else:
+                    in_cfg.setdefault("dt", self.dt)
+                    self.stdp_input = PairSTDP(n_input=self.n_input, n_output=self.n_neurons, **in_cfg)
+            else:
+                self.stdp_input = None
+
+            # Recurrent STDP: same logic as input
+            if stdp_rec_params is not None:
+                rec_cfg = stdp_rec_params.copy()
+                a_plus_rec = rec_cfg.get("a_plus")
+                a_minus_rec = rec_cfg.get("a_minus")
+                if (a_plus_rec is not None and a_plus_rec <= 0) or (a_minus_rec is not None and a_minus_rec <= 0):
+                    self.stdp_rec = None
+                else:
+                    rec_cfg.setdefault("dt", self.dt)
+                    self.stdp_rec = PairSTDP(n_input=self.n_neurons, n_output=self.n_neurons, **rec_cfg)
+            else:
+                self.stdp_rec = None
         else:
             self.stdp_input = None
             self.stdp_rec = None
@@ -194,19 +214,21 @@ class RecurrentSpikingNetwork:
         s_out = out_spikes.astype(np.float64)
 
         # 3. Online STDP: update weights inside the timestep loop
-        if self.enable_stdp and self.stdp_input is not None and self.stdp_rec is not None:
-            self.input_weights = self.stdp_input.step(
-                weights=self.input_weights,
-                pre_spikes=s_in,
-                post_spikes=s_out,
-            )
-            self.recurrent_weights = self.stdp_rec.step(
-                weights=self.recurrent_weights,
-                pre_spikes=self.y_prev,
-                post_spikes=s_out,
-            )
-            # Enforce zero diagonal constraint after update
-            np.fill_diagonal(self.recurrent_weights, 0.0)
+        if self.enable_stdp:
+            if self.stdp_input is not None:
+                self.input_weights = self.stdp_input.step(
+                    weights=self.input_weights,
+                    pre_spikes=s_in,
+                    post_spikes=s_out,
+                )
+            if self.stdp_rec is not None:
+                self.recurrent_weights = self.stdp_rec.step(
+                    weights=self.recurrent_weights,
+                    pre_spikes=self.y_prev,
+                    post_spikes=s_out,
+                )
+                # Enforce zero diagonal constraint after update
+                np.fill_diagonal(self.recurrent_weights, 0.0)
 
         # 4. Save current spikes for next timestep's recurrent feedback
         self.y_prev = np.copy(s_out)

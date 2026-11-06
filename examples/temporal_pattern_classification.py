@@ -18,6 +18,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ---------------------------------------------------------------------------
+# Constants for external use (tests, scripts)
+# ---------------------------------------------------------------------------
+DURATION = 0.1
+DT = 0.001
+NUM_PER_CLASS = 200
+SEED = 0
+
+# ---------------------------------------------------------------------------
 # Ensure src is on PYTHONPATH
 # ---------------------------------------------------------------------------
 repo_root = pathlib.Path(__file__).resolve().parents[1]
@@ -51,27 +59,37 @@ def generate_pattern(duration: float, dt: float, seed: int, first_channel: int) 
 
 
 def build_dataset(num_per_class: int, duration: float, dt: float, seed: int = 0):
-    """Return train/val/test splits (70/15/15) with balanced classes.
+    """Return stratified train/val/test splits (70/15/15) with balanced classes.
     Deterministic split based on a single RNG seeded with *seed*.
     """
     rng = np.random.default_rng(seed)
-    patterns, labels = [], []
+    # Generate patterns per class
+    class_patterns = {0: [], 1: []}
     for cls in (0, 1):
         for i in range(num_per_class):
             first = 0 if cls == 0 else 1
-            patterns.append(generate_pattern(duration, dt, seed=seed + cls * 1000 + i, first_channel=first))
-            labels.append(cls)
-    indices = np.arange(len(patterns))
-    rng.shuffle(indices)
-    patterns = [patterns[i] for i in indices]
-    labels = [labels[i] for i in indices]
-    n = len(patterns)
-    train_end = int(0.70 * n)
-    val_end = train_end + int(0.15 * n)
-    train = (patterns[:train_end], np.array(labels[:train_end], dtype=int))
-    val = (patterns[train_end:val_end], np.array(labels[train_end:val_end], dtype=int))
-    test = (patterns[val_end:], np.array(labels[val_end:], dtype=int))
-    return train, val, test
+            pattern = generate_pattern(duration, dt, seed=seed + cls * 1000 + i, first_channel=first)
+            class_patterns[cls].append(pattern)
+    # Shuffle each class separately
+    for cls in class_patterns:
+        rng.shuffle(class_patterns[cls])
+    # Compute split sizes
+    total_per_class = num_per_class
+    train_n = int(0.70 * total_per_class)
+    val_n = int(0.15 * total_per_class)
+    # Build splits preserving class balance
+    train, val, test = [], [], []
+    train_labels, val_labels, test_labels = [], [], []
+    for cls, patterns in class_patterns.items():
+        train.extend(patterns[:train_n])
+        val.extend(patterns[train_n:train_n + val_n])
+        test.extend(patterns[train_n + val_n:])
+        train_labels.extend([cls] * len(patterns[:train_n]))
+        val_labels.extend([cls] * len(patterns[train_n:train_n + val_n]))
+        test_labels.extend([cls] * len(patterns[train_n + val_n:]))
+    # Convert to numpy arrays
+    return (train, np.array(train_labels, dtype=int)), (val, np.array(val_labels, dtype=int)), (test, np.array(test_labels, dtype=int))
+
 
 # ---------------------------------------------------------------------------
 # Recurrent weight initialization – sparse ring topology
@@ -92,30 +110,7 @@ def init_sparse_ring(n_neurons: int, seed: int, base_weight: float = 0.5) -> np.
 # Feature extraction helpers
 # ---------------------------------------------------------------------------
 
-def extract_total(net, spikes_list):
-    return np.stack([net.run(s, record_weight_history=False)["spikes"].sum(axis=0) for s in spikes_list])
-
-def extract_bins(net, spikes_list, bins: int = 4):
-    n_steps = spikes_list[0].shape[0]
-    edges = np.linspace(0, n_steps, bins + 1, dtype=int)
-    feats = []
-    for s in spikes_list:
-        out = net.run(s, record_weight_history=False)["spikes"]
-        bvec = []
-        for i in range(bins):
-            bvec.append(out[edges[i]:edges[i+1]].sum(axis=0))
-        feats.append(np.concatenate(bvec))
-    return np.stack(feats)
-
-def extract_latency(net, spikes_list):
-    feats = []
-    for s in spikes_list:
-        out = net.run(s, record_weight_history=False)["spikes"]
-        first = np.argmax(out, axis=0)
-        no_spike = out.sum(axis=0) == 0
-        first = np.where(no_spike, out.shape[0], first).astype(np.float64)
-        feats.append(first)
-    return np.stack(feats)
+from neurochip_ar.temporal_features import extract_total, extract_bins, extract_latency
 
 # ---------------------------------------------------------------------------
 # Simple NumPy softmax classifier (multinomial logistic regression)
@@ -220,14 +215,24 @@ def run_experiment(seeds: list[int]):
         acc_full = np.mean(clf_full.predict(X_test_full) == y_test)
         # ---- D: Raw input baseline (4‑bin summed rates) ----
         def raw_bins(rates, bins=4):
+            """Bin summed rates for the raw‑input baseline.
+
+            ``rates`` is a list of ``np.ndarray`` with shape ``(T, n_input)``.
+            For each sample we compute the sum over ``bins`` equal‑duration windows
+            (across *all* input channels) and concatenate the results into a 1‑D
+            feature vector.  The previous implementation attempted to ``np.concatenate``
+            a list of scalar values, which raised ``ValueError: zero‑dimensional arrays
+            cannot be concatenated``.  Here we simply collect the scalars into a Python
+            list and convert it to a ``np.ndarray``.
+            """
             n_steps = rates[0].shape[0]
             edges = np.linspace(0, n_steps, bins + 1, dtype=int)
             feats = []
             for r in rates:
                 b = []
                 for i in range(bins):
-                    b.append(r[edges[i]:edges[i+1]].sum())
-                feats.append(np.concatenate(b))
+                    b.append(r[edges[i]:edges[i + 1]].sum())
+                feats.append(np.array(b, dtype=np.float64))
             return np.stack(feats)
         X_train_raw = raw_bins(train_rates)
         X_test_raw = raw_bins(test_rates)
@@ -254,7 +259,42 @@ def run_experiment(seeds: list[int]):
         f.write("===================================\n\n")
         for r in rows:
             f.write(f"Seed {r['seed']}: fixed {r['fixed_acc']:.4f}, input‑STDP {r['input_stdp_acc']:.4f}, full‑STDP {r['full_stdp_acc']:.4f}, raw {r['raw_acc']:.4f}\n")
+    # Save artifacts and generate visualisations
     print("Experiment completed. Files written to", ARTIFACT_DIR)
+    # ----- Generate additional artifacts -----
+    import matplotlib.pyplot as plt
+    # Accuracy comparison bar plot
+    seeds = [r['seed'] for r in rows]
+    fixed_acc = [r['fixed_acc'] for r in rows]
+    input_acc = [r['input_stdp_acc'] for r in rows]
+    full_acc = [r['full_stdp_acc'] for r in rows]
+    raw_acc = [r['raw_acc'] for r in rows]
+    x = np.arange(len(seeds))
+    width = 0.18
+    plt.figure(figsize=(10, 6))
+    plt.bar(x - 1.5 * width, fixed_acc, width, label='Fixed')
+    plt.bar(x - 0.5 * width, input_acc, width, label='Input STDP')
+    plt.bar(x + 0.5 * width, full_acc, width, label='Full STDP')
+    plt.bar(x + 1.5 * width, raw_acc, width, label='Raw')
+    plt.xlabel('Seed')
+    plt.ylabel('Accuracy')
+    plt.title('Temporal Classification Accuracies per Seed')
+    plt.xticks(x, seeds)
+    plt.ylim(0, 1)
+    plt.legend()
+    comp_path = ARTIFACT_DIR / "temporal_feature_comparison.png"
+    plt.tight_layout()
+    plt.savefig(comp_path)
+    plt.close()
+    # Weight evolution heatmap for full STDP network
+    plt.figure(figsize=(6, 5))
+    plt.imshow(net_full.recurrent_weights, cmap='viridis', interpolation='nearest')
+    plt.colorbar(label='Weight')
+    plt.title('Recurrent Weights after Full STDP Training')
+    weight_path = ARTIFACT_DIR / "weight_evolution.png"
+    plt.tight_layout()
+    plt.savefig(weight_path)
+    plt.close()
 
 if __name__ == "__main__":
     run_experiment(seeds=list(range(42, 52)))

@@ -1,10 +1,13 @@
-Temporal Pattern Classification Report
-====================================
+Temporal pattern classification – v0.3.2
+===================================
 
-Training accuracy: 0.5000
-Test accuracy: 0.5000
-Majority‑class baseline (test): 0.5000
-
-Confusion matrix (test set):
-[[9 0]
- [9 0]]
+Seed 42: fixed 0.4500, input‑STDP 0.4500, full‑STDP 0.4500, raw 0.5500
+Seed 43: fixed 0.4333, input‑STDP 0.4333, full‑STDP 0.4333, raw 0.5667
+Seed 44: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
+Seed 45: fixed 0.4333, input‑STDP 0.4333, full‑STDP 0.4333, raw 0.4333
+Seed 46: fixed 0.4333, input‑STDP 0.4333, full‑STDP 0.4333, raw 0.4333
+Seed 47: fixed 0.5167, input‑STDP 0.5167, full‑STDP 0.5167, raw 0.5167
+Seed 48: fixed 0.4500, input‑STDP 0.4500, full‑STDP 0.4500, raw 0.4500
+Seed 49: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
+Seed 50: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
+Seed 51: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000

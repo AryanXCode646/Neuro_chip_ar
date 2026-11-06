@@ -113,3 +113,17 @@ class LIFNeuron:
             f"LIFNeuron(v={self.v:.2f} mV, v_rest={self.v_rest:.1f} mV, "
             f"v_thresh={self.v_threshold:.1f} mV, refractory_left={self.refractory_time_left:.2f} ms)"
         )
+
+    @property
+    def params(self) -> dict:
+        """Dictionary view of neuron parameters for test compatibility."""
+        return {
+            "v_rest": self.v_rest,
+            "v_reset": self.v_reset,
+            "v_threshold": self.v_threshold,
+            "r_membrane": self.r_membrane,
+            "tau_m": self.tau_m,
+            "dt": self.dt,
+            "refractory_period": self.refractory_period,
+        }
+
