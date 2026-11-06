@@ -95,7 +95,7 @@ Requirements: Python 3.10+ (tested on Python 3.12 and 3.14).
 
 ```bash
 # Clone the repository
-git clone https://github.com/AryanSaxena20/Neuro_chip_ar.git
+git clone https://github.com/StellarResearch/Neuro_chip_ar.git
 cd Neuro_chip_ar
 
 # Create and activate a virtual environment

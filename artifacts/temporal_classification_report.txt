@@ -1,0 +1,10 @@
+Temporal Pattern Classification Report
+====================================
+
+Training accuracy: 0.5000
+Test accuracy: 0.5000
+Majority‑class baseline (test): 0.5000
+
+Confusion matrix (test set):
+[[9 0]
+ [9 0]]
