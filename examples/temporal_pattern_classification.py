@@ -13,23 +13,17 @@
 # Standard library imports
 import csv
 import pathlib
-import sys
 from typing import List, Tuple
 
-# Third‑party imports
-import numpy as np
+# Third-party imports
 import matplotlib.pyplot as plt
-
-# Ensure the package source is on PYTHONPATH
-repo_root = pathlib.Path(__file__).resolve().parents[1]
-src_path = repo_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.append(str(src_path))
+import numpy as np
 
 # Project imports
 from neurochip_ar.constants import NETWORK_DT_MS
+from neurochip_ar.encoding import poisson_rate_encoder
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
-from neurochip_ar.constants import NETWORK_DT_MS
+from neurochip_ar.temporal_features import extract_total
 
 # Constants (also used by tests)
 DURATION = 0.1
@@ -79,8 +73,12 @@ def build_dataset(
     train_n = int(0.70 * num_per_class)
     val_n = int(0.15 * num_per_class)
     splits = {
-        "train": [], "val": [], "test": [],
-        "train_labels": [], "val_labels": [], "test_labels": [],
+        "train": [],
+        "val": [],
+        "test": [],
+        "train_labels": [],
+        "val_labels": [],
+        "test_labels": [],
     }
     for cls, patterns in class_patterns.items():
         splits["train"].extend(patterns[:train_n])
@@ -142,11 +140,18 @@ class SoftmaxClassifier:
 
 def raw_bins(rates: List[np.ndarray], bins: int = 4) -> np.ndarray:
     """Baseline: sum rates in equal‑duration windows across all channels."""
+    # Preserve channel identity: sum within each bin per channel and flatten.
     n_steps = rates[0].shape[0]
     edges = np.linspace(0, n_steps, bins + 1, dtype=int)
     feats = []
     for r in rates:
-        feats.append(np.array([r[edges[i] : edges[i + 1]].sum() for i in range(bins)], dtype=np.float64))
+        # r shape: (time, channel)
+        per_bin = []
+        for i in range(bins):
+            bin_slice = r[edges[i] : edges[i + 1]]  # shape (bin_len, n_channels)
+            per_bin.append(bin_slice.sum(axis=0))  # sum over time, keep channel dimension
+        # Concatenate channel sums for all bins into a 1‑D feature vector
+        feats.append(np.concatenate(per_bin).astype(np.float64))
     return np.stack(feats)
 
 
