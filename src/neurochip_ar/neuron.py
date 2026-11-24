@@ -126,4 +126,3 @@ class LIFNeuron:
             "dt": self.dt,
             "refractory_period": self.refractory_period,
         }
-

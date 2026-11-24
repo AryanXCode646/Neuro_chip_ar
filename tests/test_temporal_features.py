@@ -14,15 +14,15 @@ These tests verify:
 
 import numpy as np
 
-from neurochip_ar.temporal_features import extract_total, extract_bins, extract_latency
 from examples.temporal_pattern_classification import (
-    build_dataset,
-    DURATION,
     DT,
+    DURATION,
     NUM_PER_CLASS,
     SEED,
+    build_dataset,
 )
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
+from neurochip_ar.temporal_features import extract_bins, extract_latency, extract_total
 
 
 def test_build_dataset_split_and_balance():
@@ -64,12 +64,14 @@ def test_extract_bins_shapes_and_finiteness():
 
 
 def test_extract_latency_handling_and_finiteness():
-    spikes = np.array([
-        [0, 1, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 0],
-    ])
+    spikes = np.array(
+        [
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 0],
+        ]
+    )
     lat = extract_latency(spikes)
     assert lat.shape == (4,)
     assert lat[1] == 0
@@ -113,9 +115,7 @@ def test_network_reset_and_weight_preservation():
 
 
 def test_dataset_separation_disjoint():
-    (train_rates, _), (val_rates, _), (test_rates, _) = build_dataset(
-        NUM_PER_CLASS, DURATION, DT, seed=SEED
-    )
+    (train_rates, _), (val_rates, _), (test_rates, _) = build_dataset(NUM_PER_CLASS, DURATION, DT, seed=SEED)
     # Ensure no shared memory between splits
     for tr in train_rates:
         for vr in val_rates:

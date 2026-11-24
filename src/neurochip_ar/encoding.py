@@ -4,15 +4,15 @@ Implements Poisson rate encoding to convert normalized continuous inputs
 into discrete binary spike trains.
 """
 
-from __future__ import annotations
-
 import numpy as np
+
+from .constants import ENCODER_DT_SECONDS
 
 
 def poisson_rate_encoder(
     inputs: np.ndarray | list[float] | float,
     duration: float | None = None,
-    dt: float = 0.001,
+    dt: float = ENCODER_DT_SECONDS,
     r_max: float = 100.0,
     seed: int | None = None,
 ) -> np.ndarray:

@@ -19,6 +19,7 @@ input spike generation.
 from __future__ import annotations
 
 import numpy as np
+
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
 
 __all__ = ["extract_total", "extract_bins", "extract_latency"]
@@ -36,8 +37,7 @@ def _run_network(net: RecurrentSpikingNetwork, spikes: np.ndarray) -> np.ndarray
 
 
 def _ensure_list(spikes_input):
-    """Accept either a single ndarray or a list of ndarrays and return a list.
-    """
+    """Accept either a single ndarray or a list of ndarrays and return a list."""
     if isinstance(spikes_input, list):
         return spikes_input
     return [spikes_input]
@@ -56,7 +56,7 @@ def extract_total(*args, **kwargs) -> np.ndarray:
     elif len(args) == 2:
         net, spikes_input = args
     else:
-        raise TypeError('extract_total expects 1 or 2 positional arguments')
+        raise TypeError("extract_total expects 1 or 2 positional arguments")
     spikes_list = _ensure_list(spikes_input)
     feats = []
     for s in spikes_list:
@@ -114,7 +114,7 @@ def extract_bins(*args, bins: int = 4) -> np.ndarray:
     elif len(args) == 2:
         net, spikes_input = args
     else:
-        raise TypeError('extract_bins expects 1 or 2 positional arguments')
+        raise TypeError("extract_bins expects 1 or 2 positional arguments")
     spikes_list = _ensure_list(spikes_input)
     feats = []
     for s in spikes_list:
@@ -126,7 +126,7 @@ def extract_bins(*args, bins: int = 4) -> np.ndarray:
         edges = np.linspace(0, n_steps, bins + 1, dtype=int)
         bvec = []
         for i in range(bins):
-            bvec.append(out_spikes[edges[i]:edges[i + 1]].sum(axis=0))
+            bvec.append(out_spikes[edges[i] : edges[i + 1]].sum(axis=0))
         feats.append(np.concatenate(bvec))
     arr = np.stack(feats)
     return arr[0] if arr.shape[0] == 1 else arr
@@ -162,7 +162,7 @@ def extract_latency(*args, **kwargs) -> np.ndarray:
     elif len(args) == 2:
         net, spikes_input = args
     else:
-        raise TypeError('extract_latency expects 1 or 2 positional arguments')
+        raise TypeError("extract_latency expects 1 or 2 positional arguments")
     spikes_list = _ensure_list(spikes_input)
     feats = []
     for s in spikes_list:
