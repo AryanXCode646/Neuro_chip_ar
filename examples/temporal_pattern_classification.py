@@ -14,7 +14,11 @@
 from __future__ import annotations
 
 import csv
+import importlib.metadata
+import math
+import os
 import pathlib
+from collections.abc import Iterable
 
 import matplotlib
 
@@ -38,8 +42,42 @@ NEURON_PARAMS = {
     "refractory_period": 2.0,
 }
 
+# Stable integer namespaces for independent SeedSequence derivation.
+_NS_DATASET_PATTERN = 1
+_NS_DATASET_CLASS_SHUFFLE = 2
+_NS_DATASET_TRAIN_SHUFFLE = 3
+_NS_ENCODER = 4
+_NS_INIT_W_IN = 5
+_NS_INIT_W_REC = 6
 
-def generate_pattern(duration: float, dt: float, seed: int, first_channel: int) -> np.ndarray:
+_SPLIT_TRAIN = 0
+_SPLIT_VAL = 1
+_SPLIT_TEST = 2
+
+
+def _derive_seed_sequence(root_seed: int, *keys: int) -> np.random.SeedSequence:
+    """Derive a deterministic, collision-free SeedSequence from *root_seed* and integer keys."""
+    return np.random.SeedSequence([int(root_seed), *(int(k) for k in keys)])
+
+
+def _validate_int_non_bool(value: object, name: str) -> int:
+    """Validate that *value* is a non-boolean integer and return it as ``int``."""
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer, got {type(value).__name__}")
+    return int(value)
+
+
+def _validate_positive_finite_float(value: object, name: str) -> float:
+    """Validate that *value* is a finite, strictly positive real number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+        raise TypeError(f"{name} must be a real number, got {type(value).__name__}")
+    val = float(value)
+    if not math.isfinite(val) or val <= 0.0:
+        raise ValueError(f"{name} must be finite and positive, got {value}")
+    return val
+
+
+def generate_pattern(duration: float, dt: float, seed: int | np.random.SeedSequence, first_channel: int) -> np.ndarray:
     """Create a two-channel pattern where *first_channel* is high then low."""
     rng = np.random.default_rng(seed)
     n_steps = int(round(duration / dt))
@@ -62,18 +100,38 @@ def build_dataset(
     tuple[list[np.ndarray], np.ndarray],
 ]:
     """Return stratified (train, val, test) splits with balanced classes and shuffled training order."""
-    rng = np.random.default_rng(seed)
+    num_per_class = _validate_int_non_bool(num_per_class, "num_per_class")
+    if num_per_class <= 0:
+        raise ValueError(f"num_per_class must be positive, got {num_per_class}")
+    duration = _validate_positive_finite_float(duration, "duration")
+    dt = _validate_positive_finite_float(dt, "dt")
+    seed = _validate_int_non_bool(seed, "seed")
+    if seed < 0:
+        raise ValueError(f"seed must be non-negative, got {seed}")
+
+    n_steps = int(round(duration / dt))
+    if n_steps < 2:
+        raise ValueError(f"duration / dt must yield at least 2 timesteps, got {n_steps}")
+
+    train_n = int(0.70 * num_per_class)
+    val_n = int(0.15 * num_per_class)
+    test_n = num_per_class - train_n - val_n
+    if train_n <= 0 or val_n <= 0 or test_n <= 0:
+        raise ValueError(
+            f"num_per_class={num_per_class} is too small for 70/15/15 split "
+            f"(train={train_n}, val={val_n}, test={test_n})"
+        )
+
     class_patterns: dict[int, list[np.ndarray]] = {0: [], 1: []}
     for cls in (0, 1):
         for i in range(num_per_class):
             first = 0 if cls == 0 else 1
-            pat = generate_pattern(duration, dt, seed=seed + cls * 1000 + i, first_channel=first)
+            pat_seed = _derive_seed_sequence(seed, _NS_DATASET_PATTERN, cls, i)
+            pat = generate_pattern(duration, dt, seed=pat_seed, first_channel=first)
             class_patterns[cls].append(pat)
-    for cls in class_patterns:
-        rng.shuffle(class_patterns[cls])
+        cls_rng = np.random.default_rng(_derive_seed_sequence(seed, _NS_DATASET_CLASS_SHUFFLE, cls))
+        cls_rng.shuffle(class_patterns[cls])
 
-    train_n = int(0.70 * num_per_class)
-    val_n = int(0.15 * num_per_class)
     splits: dict[str, list] = {
         "train": [],
         "val": [],
@@ -88,10 +146,11 @@ def build_dataset(
         splits["test"].extend(patterns[train_n + val_n :])
         splits["train_labels"].extend([cls] * train_n)
         splits["val_labels"].extend([cls] * val_n)
-        splits["test_labels"].extend([cls] * (num_per_class - train_n - val_n))
+        splits["test_labels"].extend([cls] * test_n)
 
     # Shuffle combined training split deterministically to avoid class-block STDP bias.
-    train_perm = rng.permutation(len(splits["train"]))
+    train_shuffle_rng = np.random.default_rng(_derive_seed_sequence(seed, _NS_DATASET_TRAIN_SHUFFLE))
+    train_perm = train_shuffle_rng.permutation(len(splits["train"]))
     train_shuffled = [splits["train"][idx] for idx in train_perm]
     train_labels_shuffled = np.asarray(splits["train_labels"], dtype=int)[train_perm]
 
@@ -102,7 +161,7 @@ def build_dataset(
     )
 
 
-def init_sparse_ring(n_neurons: int, seed: int, base_weight: float = 0.4) -> np.ndarray:
+def init_sparse_ring(n_neurons: int, seed: int | np.random.SeedSequence, base_weight: float = 0.4) -> np.ndarray:
     """Create a directed ring connectivity matrix (no self-connections)."""
     rng = np.random.default_rng(seed)
     w = np.zeros((n_neurons, n_neurons), dtype=np.float64)
@@ -231,38 +290,83 @@ def _train_stdp_network(
     return total_spikes, final_dw_in, final_dw_rec, stdp_updated, trajectory
 
 
+def _package_version() -> str:
+    """Return the installed ``neurochip-ar`` package version if available."""
+    try:
+        return importlib.metadata.version("neurochip-ar")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.2.0"
+
+
 def run_experiment(
-    seeds: list[int],
+    seeds: Iterable[int],
     output_dir: pathlib.Path | str | None = None,
 ) -> list[dict[str, object]]:
     """Run the temporal pattern classification experiment and save reproducible artifacts."""
-    artifact_dir = (
-        pathlib.Path(output_dir) if output_dir is not None else pathlib.Path(__file__).parent.parent / "artifacts"
-    )
+    if isinstance(seeds, (str, bytes)) or not isinstance(seeds, Iterable):
+        raise TypeError(f"seeds must be an iterable of integers, got {type(seeds).__name__}")
+    validated_seeds: list[int] = []
+    for s in seeds:
+        si = _validate_int_non_bool(s, "seed")
+        if si < 0:
+            raise ValueError(f"seed must be non-negative, got {si}")
+        validated_seeds.append(si)
+    if not validated_seeds:
+        raise ValueError("seeds must not be empty")
+    if len(set(validated_seeds)) != len(validated_seeds):
+        raise ValueError("seeds must not contain duplicate values")
+
+    if output_dir is not None:
+        if not isinstance(output_dir, (str, os.PathLike)):
+            raise TypeError(f"output_dir must be a path or string, got {type(output_dir).__name__}")
+        if isinstance(output_dir, str) and not output_dir.strip():
+            raise ValueError("output_dir must not be empty")
+        artifact_dir = pathlib.Path(output_dir)
+        if artifact_dir.exists() and not artifact_dir.is_dir():
+            raise ValueError(f"output_dir exists and is not a directory: {artifact_dir}")
+    else:
+        artifact_dir = pathlib.Path(__file__).parent.parent / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    combos = [
+        ("fixed", "total"),
+        ("fixed", "bins"),
+        ("fixed", "latency"),
+        ("input_stdp", "total"),
+        ("input_stdp", "bins"),
+        ("input_stdp", "latency"),
+        ("full_stdp", "total"),
+        ("full_stdp", "bins"),
+        ("full_stdp", "latency"),
+        ("raw", "raw_bins"),
+    ]
 
     rows: list[dict[str, object]] = []
     full_stdp_trajectories: list[list[tuple[float, float]]] = []
-    agg_cms: dict[str, np.ndarray] = {
-        "fixed / bins": np.zeros((2, 2), dtype=int),
-        "input_stdp / bins": np.zeros((2, 2), dtype=int),
-        "full_stdp / bins": np.zeros((2, 2), dtype=int),
-        "raw / raw_bins": np.zeros((2, 2), dtype=int),
-    }
+    agg_cms: dict[str, np.ndarray] = {f"{m} / {feat}": np.zeros((2, 2), dtype=int) for m, feat in combos}
 
-    for seed in seeds:
+    for seed in validated_seeds:
         (train_rates, y_train), (val_rates, y_val), (test_rates, y_test) = build_dataset(
             NUM_PER_CLASS, DURATION, DT, seed=seed
         )
-        train_spikes = [poisson_rate_encoder(r, dt=DT, seed=seed + i) for i, r in enumerate(train_rates)]
-        val_spikes = [poisson_rate_encoder(r, dt=DT, seed=seed + 1000 + i) for i, r in enumerate(val_rates)]
-        test_spikes = [poisson_rate_encoder(r, dt=DT, seed=seed + 2000 + i) for i, r in enumerate(test_rates)]
+        train_spikes = [
+            poisson_rate_encoder(r, dt=DT, seed=_derive_seed_sequence(seed, _NS_ENCODER, _SPLIT_TRAIN, i))
+            for i, r in enumerate(train_rates)
+        ]
+        val_spikes = [
+            poisson_rate_encoder(r, dt=DT, seed=_derive_seed_sequence(seed, _NS_ENCODER, _SPLIT_VAL, i))
+            for i, r in enumerate(val_rates)
+        ]
+        test_spikes = [
+            poisson_rate_encoder(r, dt=DT, seed=_derive_seed_sequence(seed, _NS_ENCODER, _SPLIT_TEST, i))
+            for i, r in enumerate(test_rates)
+        ]
 
         n_input = train_spikes[0].shape[1]
         n_output = 4
-        rng = np.random.default_rng(seed)
-        init_w_in = rng.uniform(0.2, 0.8, size=(n_output, n_input))
-        init_w_rec = init_sparse_ring(n_output, seed=seed)
+        w_in_rng = np.random.default_rng(_derive_seed_sequence(seed, _NS_INIT_W_IN))
+        init_w_in = w_in_rng.uniform(0.2, 0.8, size=(n_output, n_input))
+        init_w_rec = init_sparse_ring(n_output, seed=_derive_seed_sequence(seed, _NS_INIT_W_REC))
 
         net_fixed = RecurrentSpikingNetwork(
             n_input=n_input,
@@ -397,28 +501,47 @@ def run_experiment(
     ]
     csv_path = artifact_dir / "temporal_classification_results.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
     # Aggregate summary report
     report_path = artifact_dir / "temporal_classification_report.txt"
-    combos = [
-        ("fixed", "total"),
-        ("fixed", "bins"),
-        ("fixed", "latency"),
-        ("input_stdp", "total"),
-        ("input_stdp", "bins"),
-        ("input_stdp", "latency"),
-        ("full_stdp", "total"),
-        ("full_stdp", "bins"),
-        ("full_stdp", "latency"),
-        ("raw", "raw_bins"),
-    ]
+    train_n = int(0.70 * NUM_PER_CLASS)
+    val_n = int(0.15 * NUM_PER_CLASS)
+    test_n = NUM_PER_CLASS - train_n - val_n
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("Temporal Pattern Classification Report\n")
-        f.write(f"Seeds: {seeds}\n")
+        f.write(f"Seeds: {validated_seeds}\n")
         f.write("Chance baseline (balanced binary task): 0.5000\n\n")
+        f.write("Provenance:\n")
+        f.write(f"  Package version: neurochip-ar {_package_version()}\n")
+        f.write(f"  Experiment seed set: {validated_seeds}\n")
+        f.write(
+            "  Dataset-generation strategy: independent numpy.random.SeedSequence streams "
+            "keyed by (root_seed, namespace, [split/class, sample_idx])\n"
+        )
+        f.write(
+            f"  Dataset size & class balance: {2 * NUM_PER_CLASS} total "
+            f"({NUM_PER_CLASS} class 0, {NUM_PER_CLASS} class 1)\n"
+        )
+        f.write(
+            f"  Split sizes (stratified 70/15/15): train={2 * train_n} ({train_n}/class), "
+            f"val={2 * val_n} ({val_n}/class), test={2 * test_n} ({test_n}/class)\n"
+        )
+        f.write(f"  Encoder parameters: poisson_rate_encoder(dt={DT}s, duration={DURATION}s, r_max=100.0Hz)\n")
+        f.write(f"  Neuron parameters: dt={NETWORK_DT_MS}ms, {NEURON_PARAMS}\n")
+        f.write(f"  Feature representations: total, bins (n_bins={N_BINS}), latency, raw_bins (n_bins={N_BINS})\n")
+        f.write(
+            "  Network configurations: n_input=2, n_output=4 (sparse ring), "
+            "fixed (STDP off), input_stdp (a_plus=0.02, a_minus=0.022, w=[0,1]), "
+            "full_stdp (input+rec a_plus=0.02, a_minus=0.022, w=[0,1])\n"
+        )
+        f.write(
+            "  Readout protocol: SoftmaxClassifier (400 epochs), grid search over "
+            "lr in (0.05, 0.2, 0.5) and l2 in (0.0, 1e-3, 1e-2) on train/val "
+            "(standardized on train), refit on train+val, single evaluation on test\n\n"
+        )
         f.write("Aggregate Test Performance (mean ± sample std):\n")
         for m, feat in combos:
             sub = [r for r in rows if r["model"] == m and r["feature"] == feat]
@@ -479,20 +602,28 @@ def run_experiment(
     fig.savefig(artifact_dir / "weight_evolution.png")
     plt.close(fig)
 
-    # 3. Confusion matrices aggregated across test predictions
-    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6), constrained_layout=True)
-    for ax, (label, cm) in zip(axes, agg_cms.items()):
+    # 3. Confusion matrices aggregated across test predictions (all 10 model/feature combinations)
+    fig, axes = plt.subplots(4, 3, figsize=(11, 13), constrained_layout=True)
+    flat_axes = axes.ravel()
+    im = None
+    for idx, (label, cm) in enumerate(agg_cms.items()):
+        ax = flat_axes[idx]
         im = ax.imshow(cm, cmap="Blues", interpolation="nearest")
         ax.set_title(label)
         ax.set_xlabel("Predicted")
         ax.set_ylabel("True")
         ax.set_xticks([0, 1])
         ax.set_yticks([0, 1])
+        vmax = cm.max() if cm.size else 0
         for i in range(2):
             for j in range(2):
-                ax.text(j, i, str(cm[i, j]), ha="center", va="center", color="black")
-    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8)
-    fig.suptitle("Aggregated Test Confusion Matrices")
+                color = "white" if vmax > 0 and cm[i, j] > 0.6 * vmax else "black"
+                ax.text(j, i, str(cm[i, j]), ha="center", va="center", color=color)
+    for idx in range(len(agg_cms), len(flat_axes)):
+        flat_axes[idx].axis("off")
+    if im is not None:
+        fig.colorbar(im, ax=flat_axes[: len(agg_cms)].tolist(), shrink=0.6)
+    fig.suptitle("Aggregated Test Confusion Matrices (All 10 Model / Feature Combinations)")
     fig.savefig(artifact_dir / "confusion_matrix.png")
     plt.close(fig)
 

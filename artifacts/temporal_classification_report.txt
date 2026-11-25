@@ -1,13 +1,69 @@
-Temporal pattern classification – v0.3.2
-===================================
+Temporal Pattern Classification Report
+Seeds: [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+Chance baseline (balanced binary task): 0.5000
 
-Seed 42: fixed 0.4500, input‑STDP 0.4500, full‑STDP 0.4500, raw 0.5500
-Seed 43: fixed 0.4333, input‑STDP 0.4333, full‑STDP 0.4333, raw 0.5667
-Seed 44: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
-Seed 45: fixed 0.4333, input‑STDP 0.4333, full‑STDP 0.4333, raw 0.4333
-Seed 46: fixed 0.4333, input‑STDP 0.4333, full‑STDP 0.4333, raw 0.4333
-Seed 47: fixed 0.5167, input‑STDP 0.5167, full‑STDP 0.5167, raw 0.5167
-Seed 48: fixed 0.4500, input‑STDP 0.4500, full‑STDP 0.4500, raw 0.4500
-Seed 49: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
-Seed 50: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
-Seed 51: fixed 0.5000, input‑STDP 0.5000, full‑STDP 0.5000, raw 0.5000
+Provenance:
+  Package version: neurochip-ar 0.2.0
+  Experiment seed set: [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+  Dataset-generation strategy: independent numpy.random.SeedSequence streams keyed by (root_seed, namespace, [split/class, sample_idx])
+  Dataset size & class balance: 400 total (200 class 0, 200 class 1)
+  Split sizes (stratified 70/15/15): train=280 (140/class), val=60 (30/class), test=60 (30/class)
+  Encoder parameters: poisson_rate_encoder(dt=0.001s, duration=0.1s, r_max=100.0Hz)
+  Neuron parameters: dt=1.0ms, {'r_membrane': 30.0, 'tau_m': 15.0, 'refractory_period': 2.0}
+  Feature representations: total, bins (n_bins=4), latency, raw_bins (n_bins=4)
+  Network configurations: n_input=2, n_output=4 (sparse ring), fixed (STDP off), input_stdp (a_plus=0.02, a_minus=0.022, w=[0,1]), full_stdp (input+rec a_plus=0.02, a_minus=0.022, w=[0,1])
+  Readout protocol: SoftmaxClassifier (400 epochs), grid search over lr in (0.05, 0.2, 0.5) and l2 in (0.0, 1e-3, 1e-2) on train/val (standardized on train), refit on train+val, single evaluation on test
+
+Aggregate Test Performance (mean ± sample std):
+  fixed      | total    | acc=0.5167 ± 0.0497 | bal_acc=0.5167 ± 0.0497
+  fixed      | bins     | acc=0.7800 ± 0.0680 | bal_acc=0.7800 ± 0.0680
+  fixed      | latency  | acc=0.5783 ± 0.0969 | bal_acc=0.5783 ± 0.0969
+  input_stdp | total    | acc=0.5133 ± 0.0632 | bal_acc=0.5133 ± 0.0632
+  input_stdp | bins     | acc=0.5350 ± 0.1428 | bal_acc=0.5350 ± 0.1428
+  input_stdp | latency  | acc=0.5467 ± 0.0765 | bal_acc=0.5467 ± 0.0765
+  full_stdp  | total    | acc=0.5050 ± 0.0556 | bal_acc=0.5050 ± 0.0556
+  full_stdp  | bins     | acc=0.6317 ± 0.1959 | bal_acc=0.6317 ± 0.1959
+  full_stdp  | latency  | acc=0.5767 ± 0.1258 | bal_acc=0.5767 ± 0.1258
+  raw        | raw_bins | acc=1.0000 ± 0.0000 | bal_acc=1.0000 ± 0.0000
+
+STDP & Spiking Diagnostics (per seed):
+  seed=42 fixed      | spikes=471 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=42 input_stdp | spikes=2040 | dW_in=1.5302 | dW_rec=0.0000 | updated=True
+  seed=42 full_stdp  | spikes=1896 | dW_in=1.4286 | dW_rec=0.7996 | updated=True
+  seed=42 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=43 fixed      | spikes=801 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=43 input_stdp | spikes=2867 | dW_in=1.3754 | dW_rec=0.0000 | updated=True
+  seed=43 full_stdp  | spikes=2437 | dW_in=1.4125 | dW_rec=0.8578 | updated=True
+  seed=43 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=44 fixed      | spikes=460 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=44 input_stdp | spikes=2728 | dW_in=1.4027 | dW_rec=0.0000 | updated=True
+  seed=44 full_stdp  | spikes=2416 | dW_in=1.4050 | dW_rec=0.8403 | updated=True
+  seed=44 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=45 fixed      | spikes=785 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=45 input_stdp | spikes=3003 | dW_in=1.3112 | dW_rec=0.0000 | updated=True
+  seed=45 full_stdp  | spikes=2728 | dW_in=1.3046 | dW_rec=0.8278 | updated=True
+  seed=45 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=46 fixed      | spikes=828 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=46 input_stdp | spikes=2716 | dW_in=1.4391 | dW_rec=0.0000 | updated=True
+  seed=46 full_stdp  | spikes=2262 | dW_in=1.2320 | dW_rec=0.8467 | updated=True
+  seed=46 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=47 fixed      | spikes=822 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=47 input_stdp | spikes=3129 | dW_in=1.3193 | dW_rec=0.0000 | updated=True
+  seed=47 full_stdp  | spikes=2397 | dW_in=1.1202 | dW_rec=0.8305 | updated=True
+  seed=47 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=48 fixed      | spikes=1076 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=48 input_stdp | spikes=2880 | dW_in=1.1008 | dW_rec=0.0000 | updated=True
+  seed=48 full_stdp  | spikes=2520 | dW_in=1.1094 | dW_rec=0.8208 | updated=True
+  seed=48 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=49 fixed      | spikes=1116 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=49 input_stdp | spikes=3036 | dW_in=1.1904 | dW_rec=0.0000 | updated=True
+  seed=49 full_stdp  | spikes=2789 | dW_in=1.1990 | dW_rec=0.7572 | updated=True
+  seed=49 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=50 fixed      | spikes=385 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=50 input_stdp | spikes=2857 | dW_in=1.5282 | dW_rec=0.0000 | updated=True
+  seed=50 full_stdp  | spikes=2585 | dW_in=1.5282 | dW_rec=0.8007 | updated=True
+  seed=50 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=51 fixed      | spikes=395 | dW_in=0.0000 | dW_rec=0.0000 | updated=False
+  seed=51 input_stdp | spikes=2808 | dW_in=1.4928 | dW_rec=0.0000 | updated=True
+  seed=51 full_stdp  | spikes=2484 | dW_in=1.4878 | dW_rec=0.8760 | updated=True
+  seed=51 raw        | spikes=0 | dW_in=0.0000 | dW_rec=0.0000 | updated=False

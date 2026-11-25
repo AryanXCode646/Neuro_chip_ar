@@ -162,7 +162,7 @@ All three functions accept either:
 | Validation | 30 | 30 | 60 |
 | Testing | 30 | 30 | 60 |
 
-- Deterministic via fixed seeds; no cross-partition overlap.
+- Deterministic via independent `numpy.random.SeedSequence` streams per seed, namespace, split/class, and sample; no cross-partition or cross-seed pattern overlap.
 
 ### Evaluated configurations
 - **Fixed weights** — no STDP; random initialisation.
@@ -171,9 +171,10 @@ All three functions accept either:
 - **Raw baseline** — time-binned input rates, no network.
 
 ### Feature representations
-- Total spike counts.
-- Binned spike counts (4 windows).
-- First-spike latency.
+- Total spike counts (`total`).
+- Binned spike counts (`bins`, 4 windows).
+- First-spike latency (`latency`).
+- Raw time-binned input rates (`raw_bins`, 4 windows, baseline).
 
 ### Protocol
 - Shuffle combined training samples deterministically per seed to avoid class-block STDP bias.
@@ -181,17 +182,37 @@ All three functions accept either:
 - Freeze STDP during feature extraction and evaluation (`enable_stdp=False`).
 - Reset transient network state between independent samples.
 - Use the validation partition to select readout hyperparameters, then refit on `train + val` and evaluate once on the held-out test set.
-- Repeat across 10 fixed seeds (`42..51`).
+- Repeat across 10 independent seeds (`42..51`).
+
+### Results summary (10 independent seeds `42..51`, mean ± sample std)
+The synthetic dataset is deliberately constructed with a channel-order rate signal (channel 0 high-then-low vs. channel 1 high-then-low), so a linear readout on the raw time-binned input rates (`raw / raw_bins`) separates the classes directly (`1.0000 ± 0.0000`). The balanced binary chance baseline is `0.5000`.
+
+| Model | Feature | Test Accuracy | Balanced Accuracy |
+|---|---|---|---|
+| `fixed` | `total` | `0.5167 ± 0.0497` | `0.5167 ± 0.0497` |
+| `fixed` | `bins` | `0.7800 ± 0.0680` | `0.7800 ± 0.0680` |
+| `fixed` | `latency` | `0.5783 ± 0.0969` | `0.5783 ± 0.0969` |
+| `input_stdp` | `total` | `0.5133 ± 0.0632` | `0.5133 ± 0.0632` |
+| `input_stdp` | `bins` | `0.5350 ± 0.1428` | `0.5350 ± 0.1428` |
+| `input_stdp` | `latency` | `0.5467 ± 0.0765` | `0.5467 ± 0.0765` |
+| `full_stdp` | `total` | `0.5050 ± 0.0556` | `0.5050 ± 0.0556` |
+| `full_stdp` | `bins` | `0.6317 ± 0.1959` | `0.6317 ± 0.1959` |
+| `full_stdp` | `latency` | `0.5767 ± 0.1258` | `0.5767 ± 0.1258` |
+| `raw` | `raw_bins` | `1.0000 ± 0.0000` | `1.0000 ± 0.0000` |
+
+- **Fixed-weight SNN**: `bins` (`0.7800 ± 0.0680`) captures temporal order across the four windows above the `0.5000` chance baseline, whereas `total` (`0.5167 ± 0.0497`) discards temporal order and `latency` (`0.5783 ± 0.0969`) is closer to chance.
+- **Input-STDP & Full-STDP**: Both update weights during training (`stdp_updated=True`), but neither improves test accuracy over the fixed-weight SNN on this task.
+- **Raw baseline**: `raw_bins` achieves `1.0000 ± 0.0000` directly from the input rate trajectories; this does not imply equivalent performance by the spiking networks.
 
 ### Generated artifacts
 
 | File | Description |
 |---|---|
 | `artifacts/temporal_classification_results.csv` | Per-seed metrics, hyperparameters & STDP diagnostics |
-| `artifacts/temporal_classification_report.txt` | Aggregate mean/std summary & STDP diagnostics |
+| `artifacts/temporal_classification_report.txt` | Provenance, aggregate mean/std summary & STDP diagnostics |
 | `artifacts/temporal_feature_comparison.png` | Feature representation comparison across SNN models |
 | `artifacts/weight_evolution.png` | Online STDP weight-change norm trajectory |
-| `artifacts/confusion_matrix.png` | Aggregated test-set confusion matrices |
+| `artifacts/confusion_matrix.png` | Aggregated test-set confusion matrices (all 10 model/feature combinations) |
 
 ---
 
@@ -285,7 +306,7 @@ ruff format --check src/neurochip_ar tests examples
 - Recurrent connections are excitatory-only; inhibitory populations are not yet implemented.
 - Plasticity is pair-based STDP only — no triplet interactions, homeostatic normalisation, or short-term facilitation/depression.
 - Pure Python and NumPy; no GPU, FPGA, or hardware acceleration.
-- Temporal classification accuracy is near chance on the current synthetic task — STDP alone is insufficient for this problem without additional mechanisms.
+- On the synthetic temporal-order task, fixed-weight SNNs with binned features reach `0.7800 ± 0.0680` (vs. `0.5000` chance and `1.0000 ± 0.0000` raw-input baseline), while unsupervised PairSTDP does not improve classification accuracy over fixed weights without supervised or homeostatic mechanisms.
 
 ---
 

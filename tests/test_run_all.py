@@ -60,17 +60,6 @@ def test_run_all_rejects_missing_pyproject(tmp_path: Path) -> None:
 
 
 def test_run_all_reports_missing_dependencies(tmp_path: Path) -> None:
-    fake_python = tmp_path / "python_no_deps"
-    fake_python.write_text(
-        f"#!{sys.executable}\n"
-        "import runpy, sys\n"
-        "sys.meta_path = []\n"
-        "code = sys.stdin.read()\n"
-        "exec(compile(code, '<stdin>', 'exec'), {'__name__': '__main__'})\n",
-        encoding="utf-8",
-    )
-    fake_python.chmod(0o755)
-
     # Use a minimal python wrapper that blocks numpy/matplotlib import discovery.
     wrapper = tmp_path / "python_missing_pkg"
     wrapper.write_text(
