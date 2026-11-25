@@ -30,7 +30,7 @@ class CallRecorder:
         self._original = func
 
 
-def test_experiment_time_units(monkeypatch):
+def test_experiment_time_units(monkeypatch, tmp_path):
     # Record constructor dt values
     init_dts = []
     orig_init = RecurrentSpikingNetwork.__init__
@@ -61,7 +61,7 @@ def test_experiment_time_units(monkeypatch):
     monkeypatch.setattr(experiment, "poisson_rate_encoder", encoder_wrapper, raising=False)
 
     # Run the experiment for a single seed to keep runtime small
-    experiment.run_experiment(seeds=[0])
+    experiment.run_experiment(seeds=[0], output_dir=tmp_path)
 
     # Assertions
     assert init_dts, "Network constructor was not called"

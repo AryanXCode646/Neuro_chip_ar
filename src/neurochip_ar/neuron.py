@@ -13,6 +13,8 @@ Note: R * I yields (MΩ * nA) = (10^6 Ω * 10^-9 A) = 10^-3 V = 1 mV, maintainin
 
 from __future__ import annotations
 
+import math
+
 
 class LIFNeuron:
     """Leaky Integrate-and-Fire neuron with absolute refractory period.
@@ -46,7 +48,18 @@ class LIFNeuron:
         dt: float = 1.0,
         refractory_period: float = 5.0,
     ) -> None:
-        # Validate parameters
+        # Validate parameters for finiteness and physical constraints
+        for name, val in (
+            ("v_rest", v_rest),
+            ("v_reset", v_reset),
+            ("v_threshold", v_threshold),
+            ("r_membrane", r_membrane),
+            ("tau_m", tau_m),
+            ("dt", dt),
+            ("refractory_period", refractory_period),
+        ):
+            if not math.isfinite(float(val)):
+                raise ValueError(f"{name} must be finite, got {val}")
         if dt <= 0.0:
             raise ValueError(f"Simulation timestep dt must be positive, got {dt}")
         if tau_m <= 0.0:
@@ -91,6 +104,10 @@ class LIFNeuron:
         bool
             True if a spike was generated at this step, False otherwise.
         """
+        i_val = float(i_inj)
+        if not math.isfinite(i_val):
+            raise ValueError(f"Injected current i_inj must be finite, got {i_inj}")
+
         if self.refractory_time_left > 0.0:
             self.refractory_time_left = max(0.0, self.refractory_time_left - self.dt)
             self.v = self.v_reset
@@ -98,7 +115,7 @@ class LIFNeuron:
 
         # Forward Euler numerical integration:
         # dV = dt/tau * (V_rest - V + R * I)
-        dv = (self.dt / self.tau_m) * (self.v_rest - self.v + self.r_membrane * float(i_inj))
+        dv = (self.dt / self.tau_m) * (self.v_rest - self.v + self.r_membrane * i_val)
         self.v += dv
 
         if self.v >= self.v_threshold:

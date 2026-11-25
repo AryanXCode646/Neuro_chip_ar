@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [fix/neurochip-engineering-hardening]
+    branches: [main, "fix/**"]
   pull_request:
     branches: [main]
 
@@ -23,7 +23,11 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
+          pip install -e ".[dev]"
+      - name: Validate runner script
+        run: |
+          bash -n run_all.sh
+          bash run_all.sh --check
       - name: Run Ruff lint
         run: |
           ruff check .
@@ -37,3 +41,10 @@ jobs:
         run: |
           python -m pip install build
           python -m build
+      - name: Smoke test built wheel
+        run: |
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --upgrade pip
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+          /tmp/smoke-venv/bin/python -c "import neurochip_ar; from neurochip_ar import LIFNeuron, RecurrentSpikingNetwork, PairSTDP, poisson_rate_encoder; print('Smoke import OK')"
+          rm -rf /tmp/smoke-venv

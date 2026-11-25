@@ -4,6 +4,8 @@ Implements Poisson rate encoding to convert normalized continuous inputs
 into discrete binary spike trains.
 """
 
+import math
+
 import numpy as np
 
 from .constants import ENCODER_DT_SECONDS
@@ -43,15 +45,28 @@ def poisson_rate_encoder(
         Binary spike matrix of shape (n_timesteps, n_channels) with dtype np.int32,
         where 1 indicates a spike event and 0 indicates absence of a spike.
     """
+    if not math.isfinite(float(dt)):
+        raise ValueError(f"Simulation timestep dt must be finite, got {dt}")
     if dt <= 0.0:
         raise ValueError(f"Simulation timestep dt must be positive, got {dt}")
+    if not math.isfinite(float(r_max)):
+        raise ValueError(f"Maximum firing rate r_max must be finite, got {r_max}")
     if r_max <= 0.0:
         raise ValueError(f"Maximum firing rate r_max must be positive, got {r_max}")
+    if duration is not None:
+        if not math.isfinite(float(duration)):
+            raise ValueError(f"duration must be finite when provided, got {duration}")
+        if duration <= 0.0:
+            raise ValueError(f"duration must be positive when provided, got {duration}")
 
     arr = np.asarray(inputs, dtype=np.float64)
 
+    if arr.size == 0:
+        raise ValueError("inputs must not be empty")
     if np.any(np.isnan(arr)):
         raise ValueError("Inputs contains NaN values")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Inputs must contain only finite values")
     if np.any((arr < 0.0) | (arr > 1.0)):
         raise ValueError("Inputs must be normalized in the range [0.0, 1.0]")
 

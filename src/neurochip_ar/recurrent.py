@@ -17,6 +17,7 @@ at every simulation timestep.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -72,8 +73,12 @@ class RecurrentSpikingNetwork:
             raise ValueError(f"n_input must be positive, got {n_input}")
         if n_neurons <= 0:
             raise ValueError(f"n_neurons must be positive, got {n_neurons}")
+        if not math.isfinite(float(tau_syn)):
+            raise ValueError(f"tau_syn must be finite, got {tau_syn}")
         if tau_syn <= 0.0:
             raise ValueError(f"tau_syn must be positive, got {tau_syn}")
+        if not math.isfinite(float(dt)):
+            raise ValueError(f"dt must be finite, got {dt}")
         if dt <= 0.0:
             raise ValueError(f"dt must be positive, got {dt}")
 
@@ -242,6 +247,9 @@ class RecurrentSpikingNetwork:
     ) -> dict[str, np.ndarray]:
         """Simulate the recurrent network across a full binary spike matrix.
 
+        This method is stateful and does not call ``reset()`` implicitly; callers
+        requiring sample isolation must invoke ``reset()`` explicitly between runs.
+
         Parameters
         ----------
         input_spikes : np.ndarray, shape (n_timesteps, n_input)
@@ -264,8 +272,6 @@ class RecurrentSpikingNetwork:
             raise ValueError(f"input_spikes must be 2D of shape (n_timesteps, {self.n_input}), got {arr.shape}")
         if np.any((arr != 0.0) & (arr != 1.0)):
             raise ValueError("input_spikes must be binary indicators (0 or 1)")
-
-        # Reset network state before simulation to ensure deterministic start
 
         n_steps = arr.shape[0]
         recorded_spikes = np.zeros((n_steps, self.n_neurons), dtype=np.int32)

@@ -6,6 +6,7 @@ through a weighted synaptic matrix with exponential current decay.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -51,14 +52,20 @@ class FeedForwardNetwork:
             raise ValueError(f"n_input must be positive, got {n_input}")
         if n_output <= 0:
             raise ValueError(f"n_output must be positive, got {n_output}")
+        if not math.isfinite(float(tau_syn)):
+            raise ValueError(f"tau_syn must be finite, got {tau_syn}")
         if tau_syn <= 0.0:
             raise ValueError(f"tau_syn must be positive, got {tau_syn}")
+        if not math.isfinite(float(dt)):
+            raise ValueError(f"dt must be finite, got {dt}")
         if dt <= 0.0:
             raise ValueError(f"dt must be positive, got {dt}")
 
         weights = np.asarray(weight_matrix, dtype=np.float64)
         if weights.shape != (n_output, n_input):
             raise ValueError(f"weight_matrix shape mismatch: expected ({n_output}, {n_input}), got {weights.shape}")
+        if not np.all(np.isfinite(weights)):
+            raise ValueError("weight_matrix must contain only finite numerical values")
 
         self.n_input = int(n_input)
         self.n_output = int(n_output)
@@ -97,6 +104,10 @@ class FeedForwardNetwork:
         s_in = np.asarray(input_spikes, dtype=np.float64)
         if s_in.shape != (self.n_input,):
             raise ValueError(f"input_spikes shape mismatch: expected ({self.n_input},), got {s_in.shape}")
+        if not np.all(np.isfinite(s_in)):
+            raise ValueError("input_spikes must contain only finite values")
+        if np.any((s_in != 0.0) & (s_in != 1.0)):
+            raise ValueError("input_spikes must be binary indicators (0 or 1)")
 
         # Decay previous synaptic current and add incoming spikes weighted sum
         self.i_syn = (self.i_syn * self.decay_factor) + (self.weights @ s_in)
@@ -130,6 +141,10 @@ class FeedForwardNetwork:
         arr = np.asarray(input_spikes, dtype=np.float64)
         if arr.ndim != 2 or arr.shape[1] != self.n_input:
             raise ValueError(f"input_spikes must be 2D of shape (n_timesteps, {self.n_input}), got {arr.shape}")
+        if not np.all(np.isfinite(arr)):
+            raise ValueError("input_spikes must contain only finite values")
+        if np.any((arr != 0.0) & (arr != 1.0)):
+            raise ValueError("input_spikes must be binary indicators (0 or 1)")
 
         n_steps = arr.shape[0]
         recorded_spikes = np.zeros((n_steps, self.n_output), dtype=np.int32)

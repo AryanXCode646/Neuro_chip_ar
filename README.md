@@ -6,7 +6,7 @@
 
 ## Overview
 
-NeuroChip AR is an open-source project building a biologically grounded spiking neural network (SNN) foundation in pure Python. The goal is to establish a reproducible, testable computational substrate before considering any embedded or hardware implementation.
+NeuroChip AR is a software-first project building a spiking neural network (SNN) foundation in pure Python. The goal is to establish a reproducible, testable computational substrate before considering any embedded or hardware implementation.
 
 The project is **not** a simulation of the human brain and does not claim to replicate biological cognition. It implements well-defined mathematical models of neuron dynamics, synaptic plasticity, and temporal information processing, verifiable against analytical solutions and reproducible across runs.
 
@@ -18,31 +18,41 @@ The project is **not** a simulation of the human brain and does not claim to rep
 Neuro_chip_ar/
 ├── src/neurochip_ar/
 │   ├── __init__.py                   # Public package exports
+│   ├── constants.py                  # Shared simulation & encoding time-unit constants
 │   ├── neuron.py                     # Leaky Integrate-and-Fire neuron model
 │   ├── encoding.py                   # Seeded Poisson rate encoder
 │   ├── network.py                    # Feed-forward SNN with synaptic decay
 │   ├── stdp.py                       # Pair-based STDP plasticity rule
 │   ├── recurrent.py                  # Recurrent SNN with delayed feedback + online STDP
-│   └── temporal_features.py          # Temporal feature extraction utilities  [new]
+│   └── temporal_features.py          # Temporal feature extraction utilities
 ├── examples/
 │   ├── basic_neurochip_demo.py       # Feed-forward & offline STDP demo
 │   ├── recurrent_neurochip_demo.py   # Recurrent network & online STDP demo
-│   └── temporal_pattern_classification.py  # Temporal learning experiment  [new]
+│   └── temporal_pattern_classification.py  # Temporal learning experiment
 ├── tests/
-│   ├── test_neuron.py                # LIF dynamics & refractory tests
+│   ├── test_neuron.py                # LIF dynamics, analytical & convergence tests
 │   ├── test_encoding.py              # Encoder dimensions & reproducibility
 │   ├── test_network.py               # Feed-forward propagation & reset
 │   ├── test_stdp.py                  # STDP LTP, LTD & weight-bound tests
 │   ├── test_recurrent.py             # Recurrent delay, feedback & STDP tests
 │   ├── test_recurrent_stdp_bounds.py # STDP weight-bound edge cases
-│   ├── test_stdp_configuration.py    # Independent STDP component configuration  [new]
-│   └── test_temporal_features.py     # Temporal feature extraction tests  [new]
+│   ├── test_stdp_configuration.py    # Independent STDP component configuration
+│   ├── test_temporal_features.py     # Temporal feature extraction tests
+│   ├── test_time_units.py            # Shared time-unit constant tests
+│   ├── test_sample_isolation.py      # Sample-isolation & STDP trace reset tests
+│   ├── test_raw_bins_channel_preservation.py  # Raw baseline channel/bin tests
+│   ├── test_experiment_time_units_integration.py  # Experiment dt integration test
+│   ├── test_experiment_scientific_validity.py     # Shuffling, STDP & artifact tests
+│   ├── test_validation_and_features.py            # Finite/binary input validation tests
+│   └── test_run_all.py               # Runner root, dependency & check-mode tests
 ├── artifacts/
 │   ├── basic_neurochip_demo.png      # Feed-forward visualisation
 │   ├── recurrent_neurochip_demo.png  # Recurrent network visualisation
-│   ├── confusion_matrix.png          # Test-set confusion matrix (full-STDP)  [new]
-│   ├── temporal_classification_results.csv   # Per-seed accuracy table  [new]
-│   └── temporal_classification_report.txt    # Human-readable summary  [new]
+│   ├── temporal_feature_comparison.png     # Feature-representation comparison
+│   ├── weight_evolution.png          # Online STDP weight-change norm trajectory
+│   ├── confusion_matrix.png          # Aggregated test-set confusion matrices
+│   ├── temporal_classification_results.csv # Per-seed metrics & STDP diagnostics
+│   └── temporal_classification_report.txt  # Human-readable summary
 ├── run_all.sh                        # Portable experiment runner
 ├── conftest.py                       # pytest configuration
 └── pyproject.toml                    # Build & dependency configuration
@@ -137,7 +147,7 @@ All three functions accept either:
 
 ---
 
-## Temporal Pattern Classification Experiment *(v0.3.2)*
+## Temporal Pattern Classification Experiment *(v0.2.0)*
 
 `examples/temporal_pattern_classification.py` demonstrates a complete temporal learning pipeline:
 
@@ -166,25 +176,28 @@ All three functions accept either:
 - First-spike latency.
 
 ### Protocol
-- Train STDP on training partition only.
-- Freeze STDP during evaluation.
+- Shuffle combined training samples deterministically per seed to avoid class-block STDP bias.
+- Train STDP on the training partition only.
+- Freeze STDP during feature extraction and evaluation (`enable_stdp=False`).
 - Reset transient network state between independent samples.
-- Evaluate on held-out test set.
-- Repeat across 10 fixed seeds.
+- Use the validation partition to select readout hyperparameters, then refit on `train + val` and evaluate once on the held-out test set.
+- Repeat across 10 fixed seeds (`42..51`).
 
 ### Generated artifacts
 
 | File | Description |
 |---|---|
-| `artifacts/temporal_classification_results.csv` | Accuracy per seed & configuration |
-| `artifacts/temporal_classification_report.txt` | Human-readable summary |
-| `artifacts/confusion_matrix.png` | Test-set confusion matrix (full-STDP config) |
+| `artifacts/temporal_classification_results.csv` | Per-seed metrics, hyperparameters & STDP diagnostics |
+| `artifacts/temporal_classification_report.txt` | Aggregate mean/std summary & STDP diagnostics |
+| `artifacts/temporal_feature_comparison.png` | Feature representation comparison across SNN models |
+| `artifacts/weight_evolution.png` | Online STDP weight-change norm trajectory |
+| `artifacts/confusion_matrix.png` | Aggregated test-set confusion matrices |
 
 ---
 
 ## Setup & Installation
 
-Requirements: **Python 3.10+** (tested on 3.12 and 3.14).
+Requirements: **Python 3.10+** (tested in CI on Python 3.10, 3.11, and 3.12).
 
 ```bash
 # Clone the canonical repository
@@ -207,7 +220,7 @@ pip install -e ".[dev]"
 ```bash
 bash run_all.sh
 ```
-Automatically resolves the repository root, prefers `.venv/bin/python`, falls back to system `python3`, checks required packages, and runs all three scripts. Stops immediately on any error (`set -euo pipefail`).
+Run `bash run_all.sh --check` to validate the repository root, Python interpreter, and dependencies without executing the examples.
 
 ### Individual scripts
 ```bash
@@ -240,7 +253,7 @@ ruff check src/neurochip_ar tests examples
 ruff format --check src/neurochip_ar tests examples
 ```
 
-**Current status: 48 tests, all passing.**
+**Current status: automated test suite verified via `pytest` in CI across Python 3.10, 3.11, and 3.12.**
 
 ---
 
@@ -255,7 +268,7 @@ ruff format --check src/neurochip_ar tests examples
 
 ---
 
-## Current Status — v0.3.2
+## Current Status — v0.2.0
 
 ### Implemented
 - Forward Euler LIF neuron with absolute refractory period and stability validation.
@@ -263,10 +276,10 @@ ruff format --check src/neurochip_ar tests examples
 - Feed-forward SNN with exponential synaptic current decay.
 - Recurrent SNN with one-timestep delayed feedback and zero-diagonal constraint.
 - Pair-based STDP with independent guards for input and recurrent synapses.
-- Temporal feature extraction module (`total`, `binned`, `latency`).
+- Temporal feature extraction module (`total`, `binned`, `latency`, and `raw_bins` baseline).
 - Stratified temporal pattern classification experiment with 10-seed evaluation.
-- Portable experiment runner (`run_all.sh`).
-- 48 automated tests (all passing).
+- Portable experiment runner (`run_all.sh`) with `--check` validation mode.
+- Automated unit, numerical-convergence, and regression test suite (`tests/`).
 
 ### Known limitations
 - Recurrent connections are excitatory-only; inhibitory populations are not yet implemented.

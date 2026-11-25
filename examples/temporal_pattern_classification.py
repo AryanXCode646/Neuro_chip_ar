@@ -2,41 +2,45 @@
 """Temporal pattern classification experiment.
 
 - Balanced dataset (200 samples per class)
-- Stratified 70/15/15 train/val/test split
+- Stratified 70/15/15 train/val/test split with seed-controlled training shuffle
 - Sparse ring recurrent connectivity
-- Optional STDP on input and recurrent synapses
-- Feature extractors: total spikes, binned counts, latency
-- Raw‑input baseline using time‑binned rates
-- Results saved in `artifacts/`
+- Online PairSTDP on input and recurrent synapses (train split only)
+- Feature extractors: total spikes, binned counts, first-spike latency
+- Raw-input baseline using time-binned rates
+- Validation-based readout hyperparameter selection and leak-free test evaluation
+- Results and figures saved to ``artifacts/`` (or a caller-specified ``output_dir``)
 """
 
-# Standard library imports
+from __future__ import annotations
+
 import csv
 import pathlib
-from typing import List, Tuple
 
-# Third-party imports
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Project imports
-from neurochip_ar.constants import NETWORK_DT_MS
+from neurochip_ar.constants import ENCODER_DT_SECONDS, NETWORK_DT_MS
 from neurochip_ar.encoding import poisson_rate_encoder
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
-from neurochip_ar.temporal_features import extract_total, raw_bins
+from neurochip_ar.temporal_features import extract_bins, extract_latency, extract_total, raw_bins
 
-# Constants (also used by tests)
 DURATION = 0.1
-DT = 0.001
+DT = ENCODER_DT_SECONDS
 NUM_PER_CLASS = 200
 SEED = 0
+N_BINS = 4
+NEURON_PARAMS = {
+    "r_membrane": 30.0,
+    "tau_m": 15.0,
+    "refractory_period": 2.0,
+}
 
 
 def generate_pattern(duration: float, dt: float, seed: int, first_channel: int) -> np.ndarray:
-    """Create a two‑channel pattern where *first_channel* is high then low.
-
-    Jitter and small Gaussian noise are added for realism.
-    """
+    """Create a two-channel pattern where *first_channel* is high then low."""
     rng = np.random.default_rng(seed)
     n_steps = int(round(duration / dt))
     pattern = np.zeros((n_steps, 2), dtype=np.float64)
@@ -52,17 +56,14 @@ def generate_pattern(duration: float, dt: float, seed: int, first_channel: int) 
 
 def build_dataset(
     num_per_class: int, duration: float, dt: float, seed: int = 0
-) -> Tuple[
-    Tuple[List[np.ndarray], np.ndarray],
-    Tuple[List[np.ndarray], np.ndarray],
-    Tuple[List[np.ndarray], np.ndarray],
+) -> tuple[
+    tuple[list[np.ndarray], np.ndarray],
+    tuple[list[np.ndarray], np.ndarray],
+    tuple[list[np.ndarray], np.ndarray],
 ]:
-    """Return stratified (train, val, test) splits with balanced classes.
-
-    Splits: 70 % train, 15 % validation, 15 % test.
-    """
+    """Return stratified (train, val, test) splits with balanced classes and shuffled training order."""
     rng = np.random.default_rng(seed)
-    class_patterns = {0: [], 1: []}
+    class_patterns: dict[int, list[np.ndarray]] = {0: [], 1: []}
     for cls in (0, 1):
         for i in range(num_per_class):
             first = 0 if cls == 0 else 1
@@ -70,9 +71,10 @@ def build_dataset(
             class_patterns[cls].append(pat)
     for cls in class_patterns:
         rng.shuffle(class_patterns[cls])
+
     train_n = int(0.70 * num_per_class)
     val_n = int(0.15 * num_per_class)
-    splits = {
+    splits: dict[str, list] = {
         "train": [],
         "val": [],
         "test": [],
@@ -87,15 +89,21 @@ def build_dataset(
         splits["train_labels"].extend([cls] * train_n)
         splits["val_labels"].extend([cls] * val_n)
         splits["test_labels"].extend([cls] * (num_per_class - train_n - val_n))
+
+    # Shuffle combined training split deterministically to avoid class-block STDP bias.
+    train_perm = rng.permutation(len(splits["train"]))
+    train_shuffled = [splits["train"][idx] for idx in train_perm]
+    train_labels_shuffled = np.asarray(splits["train_labels"], dtype=int)[train_perm]
+
     return (
-        (splits["train"], np.array(splits["train_labels"], dtype=int)),
-        (splits["val"], np.array(splits["val_labels"], dtype=int)),
-        (splits["test"], np.array(splits["test_labels"], dtype=int)),
+        (train_shuffled, train_labels_shuffled),
+        (splits["val"], np.asarray(splits["val_labels"], dtype=int)),
+        (splits["test"], np.asarray(splits["test_labels"], dtype=int)),
     )
 
 
-def init_sparse_ring(n_neurons: int, seed: int, base_weight: float = 0.5) -> np.ndarray:
-    """Create a directed ring connectivity matrix (no self‑connections)."""
+def init_sparse_ring(n_neurons: int, seed: int, base_weight: float = 0.4) -> np.ndarray:
+    """Create a directed ring connectivity matrix (no self-connections)."""
     rng = np.random.default_rng(seed)
     w = np.zeros((n_neurons, n_neurons), dtype=np.float64)
     for i in range(n_neurons):
@@ -105,31 +113,29 @@ def init_sparse_ring(n_neurons: int, seed: int, base_weight: float = 0.5) -> np.
 
 
 class SoftmaxClassifier:
-    """Simple multinomial logistic regression using NumPy.
+    """Multinomial logistic regression with optional L2 regularization using NumPy."""
 
-    Gradient descent is performed with a fixed learning rate.
-    """
-
-    def __init__(self, lr: float = 0.1, epochs: int = 200):
+    def __init__(self, lr: float = 0.1, epochs: int = 400, l2: float = 0.0):
         self.lr = lr
         self.epochs = epochs
+        self.l2 = l2
 
     def _softmax(self, logits: np.ndarray) -> np.ndarray:
         exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
         return exp / exp.sum(axis=1, keepdims=True)
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "SoftmaxClassifier":
+    def fit(self, X: np.ndarray, y: np.ndarray) -> SoftmaxClassifier:
         n_samples, n_features = X.shape
         n_classes = int(np.max(y)) + 1
-        self.W = np.zeros((n_classes, n_features))
-        self.b = np.zeros(n_classes)
+        self.W = np.zeros((n_classes, n_features), dtype=np.float64)
+        self.b = np.zeros(n_classes, dtype=np.float64)
         for _ in range(self.epochs):
             logits = X @ self.W.T + self.b
             probs = self._softmax(logits)
             y_onehot = np.zeros_like(probs)
             y_onehot[np.arange(n_samples), y] = 1.0
             grad = (probs - y_onehot) / n_samples
-            self.W -= self.lr * grad.T @ X
+            self.W -= self.lr * ((grad.T @ X) + self.l2 * self.W)
             self.b -= self.lr * grad.sum(axis=0)
         return self
 
@@ -138,132 +144,360 @@ class SoftmaxClassifier:
         return np.argmax(logits, axis=1)
 
 
-def run_experiment(seeds: List[int]):
-    artifact_dir = pathlib.Path(__file__).parent.parent / "artifacts"
+def _standardize(X_fit: np.ndarray, *others: np.ndarray) -> tuple[np.ndarray, ...]:
+    """Standardize features using ``X_fit`` statistics only."""
+    mean = X_fit.mean(axis=0, keepdims=True)
+    std = X_fit.std(axis=0, keepdims=True)
+    safe_std = np.where(std > 1e-8, std, 1.0)
+    transformed = [(X_fit - mean) / safe_std]
+    for X in others:
+        transformed.append((X - mean) / safe_std)
+    return tuple(transformed)
+
+
+def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float | int]:
+    """Compute accuracy, balanced accuracy, and binary confusion counts."""
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    acc = float(np.mean(y_true == y_pred))
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    bal_acc = 0.5 * (tpr + tnr)
+    return {
+        "accuracy": acc,
+        "balanced_accuracy": float(bal_acc),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+    }
+
+
+def _select_and_evaluate(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+) -> tuple[dict[str, float | int], float, float, np.ndarray]:
+    """Select readout hyperparameters on validation data, refit on train+val, evaluate on test."""
+    X_tr_s, X_val_s = _standardize(X_train, X_val)
+    best_val_acc = -1.0
+    best_lr = 0.1
+    best_l2 = 0.0
+    for lr in (0.05, 0.2, 0.5):
+        for l2 in (0.0, 1e-3, 1e-2):
+            clf = SoftmaxClassifier(lr=lr, epochs=400, l2=l2).fit(X_tr_s, y_train)
+            val_acc = float(np.mean(clf.predict(X_val_s) == y_val))
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_lr = lr
+                best_l2 = l2
+
+    X_trainval = np.vstack([X_train, X_val])
+    y_trainval = np.concatenate([y_train, y_val])
+    X_tv_s, X_te_s = _standardize(X_trainval, X_test)
+    final_clf = SoftmaxClassifier(lr=best_lr, epochs=400, l2=best_l2).fit(X_tv_s, y_trainval)
+    y_pred = final_clf.predict(X_te_s)
+    metrics = _compute_metrics(y_test, y_pred)
+    return metrics, best_lr, best_l2, y_pred
+
+
+def _train_stdp_network(
+    net: RecurrentSpikingNetwork,
+    train_spikes: list[np.ndarray],
+    init_w_in: np.ndarray,
+    init_w_rec: np.ndarray,
+) -> tuple[int, float, float, bool, list[tuple[float, float]]]:
+    """Run online STDP over training samples with explicit sample-state resets."""
+    total_spikes = 0
+    trajectory: list[tuple[float, float]] = []
+    for s in train_spikes:
+        res = net.run(s, record_weight_history=False)
+        total_spikes += int(res["spikes"].sum())
+        net.reset()
+        dw_in = float(np.linalg.norm(net.input_weights - init_w_in))
+        dw_rec = float(np.linalg.norm(net.recurrent_weights - init_w_rec))
+        trajectory.append((dw_in, dw_rec))
+
+    net.enable_stdp = False
+    net.reset()
+    final_dw_in = float(np.linalg.norm(net.input_weights - init_w_in))
+    final_dw_rec = float(np.linalg.norm(net.recurrent_weights - init_w_rec))
+    stdp_updated = (final_dw_in > 0.0) or (final_dw_rec > 0.0)
+    return total_spikes, final_dw_in, final_dw_rec, stdp_updated, trajectory
+
+
+def run_experiment(
+    seeds: list[int],
+    output_dir: pathlib.Path | str | None = None,
+) -> list[dict[str, object]]:
+    """Run the temporal pattern classification experiment and save reproducible artifacts."""
+    artifact_dir = (
+        pathlib.Path(output_dir) if output_dir is not None else pathlib.Path(__file__).parent.parent / "artifacts"
+    )
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    rows = []
+
+    rows: list[dict[str, object]] = []
+    full_stdp_trajectories: list[list[tuple[float, float]]] = []
+    agg_cms: dict[str, np.ndarray] = {
+        "fixed / bins": np.zeros((2, 2), dtype=int),
+        "input_stdp / bins": np.zeros((2, 2), dtype=int),
+        "full_stdp / bins": np.zeros((2, 2), dtype=int),
+        "raw / raw_bins": np.zeros((2, 2), dtype=int),
+    }
+
     for seed in seeds:
-        (train_rates, y_train), (_, _), (test_rates, y_test) = build_dataset(NUM_PER_CLASS, DURATION, DT, seed=seed)
+        (train_rates, y_train), (val_rates, y_val), (test_rates, y_test) = build_dataset(
+            NUM_PER_CLASS, DURATION, DT, seed=seed
+        )
         train_spikes = [poisson_rate_encoder(r, dt=DT, seed=seed + i) for i, r in enumerate(train_rates)]
+        val_spikes = [poisson_rate_encoder(r, dt=DT, seed=seed + 1000 + i) for i, r in enumerate(val_rates)]
         test_spikes = [poisson_rate_encoder(r, dt=DT, seed=seed + 2000 + i) for i, r in enumerate(test_rates)]
+
         n_input = train_spikes[0].shape[1]
         n_output = 4
         rng = np.random.default_rng(seed)
         init_w_in = rng.uniform(0.2, 0.8, size=(n_output, n_input))
         init_w_rec = init_sparse_ring(n_output, seed=seed)
-        # Fixed weights (no STDP)
+
         net_fixed = RecurrentSpikingNetwork(
             n_input=n_input,
             n_neurons=n_output,
             input_weights=init_w_in,
             recurrent_weights=init_w_rec,
             dt=NETWORK_DT_MS,
+            neuron_params=NEURON_PARAMS,
             enable_stdp=False,
         )
-        X_train_fixed = extract_total(net_fixed, train_spikes)
-        X_test_fixed = extract_total(net_fixed, test_spikes)
-        clf_fixed = SoftmaxClassifier(lr=0.5, epochs=500).fit(X_train_fixed, y_train)
-        acc_fixed = np.mean(clf_fixed.predict(X_test_fixed) == y_test)
-        # Input‑only STDP
         net_input = RecurrentSpikingNetwork(
             n_input=n_input,
             n_neurons=n_output,
             input_weights=init_w_in,
             recurrent_weights=init_w_rec,
             dt=NETWORK_DT_MS,
+            neuron_params=NEURON_PARAMS,
             enable_stdp=True,
             stdp_input_params={"a_plus": 0.02, "a_minus": 0.022, "w_min": 0.0, "w_max": 1.0},
             stdp_rec_params={"a_plus": 0.0, "a_minus": 0.0},
         )
-        for s in train_spikes:
-            net_input.run(s)
-            net_input.reset()
-        net_input.enable_stdp = False
-        net_input.reset()
-        acc_input = np.mean(
-            SoftmaxClassifier(lr=0.5, epochs=500)
-            .fit(extract_total(net_input, train_spikes), y_train)
-            .predict(extract_total(net_input, test_spikes))
-            == y_test
-        )
-        # Full STDP (input + recurrent)
         net_full = RecurrentSpikingNetwork(
             n_input=n_input,
             n_neurons=n_output,
             input_weights=init_w_in,
             recurrent_weights=init_w_rec,
             dt=NETWORK_DT_MS,
+            neuron_params=NEURON_PARAMS,
             enable_stdp=True,
             stdp_input_params={"a_plus": 0.02, "a_minus": 0.022, "w_min": 0.0, "w_max": 1.0},
             stdp_rec_params={"a_plus": 0.02, "a_minus": 0.022, "w_min": 0.0, "w_max": 1.0},
         )
+
+        # Count spikes during fixed baseline pass for fair diagnostic comparison.
+        fixed_spikes = 0
         for s in train_spikes:
-            net_full.run(s)
-            net_full.reset()
-        net_full.enable_stdp = False
-        net_full.reset()
-        acc_full = np.mean(
-            SoftmaxClassifier(lr=0.5, epochs=500)
-            .fit(extract_total(net_full, train_spikes), y_train)
-            .predict(extract_total(net_full, test_spikes))
-            == y_test
+            fixed_spikes += int(net_fixed.run(s, record_weight_history=False)["spikes"].sum())
+            net_fixed.reset()
+
+        in_spikes, in_dw_in, in_dw_rec, in_updated, _ = _train_stdp_network(
+            net_input, train_spikes, init_w_in, init_w_rec
         )
-        # Raw baseline
-        X_train_raw = raw_bins(train_rates)
-        X_test_raw = raw_bins(test_rates)
-        clf_raw = SoftmaxClassifier(lr=0.5, epochs=500).fit(X_train_raw, y_train)
-        acc_raw = np.mean(clf_raw.predict(X_test_raw) == y_test)
+        full_spikes, full_dw_in, full_dw_rec, full_updated, full_traj = _train_stdp_network(
+            net_full, train_spikes, init_w_in, init_w_rec
+        )
+        full_stdp_trajectories.append(full_traj)
+
+        models = [
+            ("fixed", net_fixed, fixed_spikes, 0.0, 0.0, False),
+            ("input_stdp", net_input, in_spikes, in_dw_in, in_dw_rec, in_updated),
+            ("full_stdp", net_full, full_spikes, full_dw_in, full_dw_rec, full_updated),
+        ]
+        extractors = [
+            ("total", lambda net, spk: extract_total(net, spk)),
+            ("bins", lambda net, spk: extract_bins(net, spk, bins=N_BINS)),
+            ("latency", lambda net, spk: extract_latency(net, spk, dt_ms=NETWORK_DT_MS)),
+        ]
+
+        for model_name, net, spk_cnt, dw_in, dw_rec, updated in models:
+            for feat_name, fn in extractors:
+                X_tr = fn(net, train_spikes)
+                X_va = fn(net, val_spikes)
+                X_te = fn(net, test_spikes)
+                metrics, best_lr, best_l2, _ = _select_and_evaluate(X_tr, y_train, X_va, y_val, X_te, y_test)
+                rows.append(
+                    {
+                        "seed": seed,
+                        "model": model_name,
+                        "feature": feat_name,
+                        "accuracy": metrics["accuracy"],
+                        "balanced_accuracy": metrics["balanced_accuracy"],
+                        "tp": metrics["tp"],
+                        "fp": metrics["fp"],
+                        "fn": metrics["fn"],
+                        "tn": metrics["tn"],
+                        "best_lr": best_lr,
+                        "best_l2": best_l2,
+                        "delta_w_in_norm": dw_in,
+                        "delta_w_rec_norm": dw_rec,
+                        "train_output_spikes": spk_cnt,
+                        "stdp_updated": updated,
+                    }
+                )
+                key = f"{model_name} / {feat_name}"
+                if key in agg_cms:
+                    agg_cms[key] += np.array([[metrics["tn"], metrics["fp"]], [metrics["fn"], metrics["tp"]]])
+
+        # Raw input baseline
+        X_tr_raw = raw_bins(train_rates, bins=N_BINS)
+        X_va_raw = raw_bins(val_rates, bins=N_BINS)
+        X_te_raw = raw_bins(test_rates, bins=N_BINS)
+        raw_metrics, raw_lr, raw_l2, _ = _select_and_evaluate(X_tr_raw, y_train, X_va_raw, y_val, X_te_raw, y_test)
         rows.append(
             {
                 "seed": seed,
-                "fixed_acc": acc_fixed,
-                "input_stdp_acc": acc_input,
-                "full_stdp_acc": acc_full,
-                "raw_acc": acc_raw,
+                "model": "raw",
+                "feature": "raw_bins",
+                "accuracy": raw_metrics["accuracy"],
+                "balanced_accuracy": raw_metrics["balanced_accuracy"],
+                "tp": raw_metrics["tp"],
+                "fp": raw_metrics["fp"],
+                "fn": raw_metrics["fn"],
+                "tn": raw_metrics["tn"],
+                "best_lr": raw_lr,
+                "best_l2": raw_l2,
+                "delta_w_in_norm": 0.0,
+                "delta_w_rec_norm": 0.0,
+                "train_output_spikes": 0,
+                "stdp_updated": False,
             }
         )
-    # Write CSV results
+        agg_cms["raw / raw_bins"] += np.array(
+            [[raw_metrics["tn"], raw_metrics["fp"]], [raw_metrics["fn"], raw_metrics["tp"]]]
+        )
+
+    fieldnames = [
+        "seed",
+        "model",
+        "feature",
+        "accuracy",
+        "balanced_accuracy",
+        "tp",
+        "fp",
+        "fn",
+        "tn",
+        "best_lr",
+        "best_l2",
+        "delta_w_in_norm",
+        "delta_w_rec_norm",
+        "train_output_spikes",
+        "stdp_updated",
+    ]
     csv_path = artifact_dir / "temporal_classification_results.csv"
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["seed", "fixed_acc", "input_stdp_acc", "full_stdp_acc", "raw_acc"])
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-    # Write short report
+
+    # Aggregate summary report
     report_path = artifact_dir / "temporal_classification_report.txt"
-    with open(report_path, "w") as f:
-        f.write("Temporal pattern classification – v0.3.2\n\n")
-        for r in rows:
+    combos = [
+        ("fixed", "total"),
+        ("fixed", "bins"),
+        ("fixed", "latency"),
+        ("input_stdp", "total"),
+        ("input_stdp", "bins"),
+        ("input_stdp", "latency"),
+        ("full_stdp", "total"),
+        ("full_stdp", "bins"),
+        ("full_stdp", "latency"),
+        ("raw", "raw_bins"),
+    ]
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("Temporal Pattern Classification Report\n")
+        f.write(f"Seeds: {seeds}\n")
+        f.write("Chance baseline (balanced binary task): 0.5000\n\n")
+        f.write("Aggregate Test Performance (mean ± sample std):\n")
+        for m, feat in combos:
+            sub = [r for r in rows if r["model"] == m and r["feature"] == feat]
+            accs = np.array([float(r["accuracy"]) for r in sub])
+            bals = np.array([float(r["balanced_accuracy"]) for r in sub])
+            ddof = 1 if len(accs) > 1 else 0
             f.write(
-                f"Seed {r['seed']}: fixed {r['fixed_acc']:.4f}, input‑STDP {r['input_stdp_acc']:.4f}, "
-                f"full‑STDP {r['full_stdp_acc']:.4f}, raw {r['raw_acc']:.4f}\n"
+                f"  {m:10s} | {feat:8s} | acc={accs.mean():.4f} ± {accs.std(ddof=ddof):.4f} "
+                f"| bal_acc={bals.mean():.4f} ± {bals.std(ddof=ddof):.4f}\n"
             )
-    # Plot accuracies per seed
-    seeds = [r["seed"] for r in rows]
-    width = 0.18
-    x = np.arange(len(seeds))
-    plt.figure(figsize=(10, 6))
-    plt.bar(x - 1.5 * width, [r["fixed_acc"] for r in rows], width, label="Fixed")
-    plt.bar(x - 0.5 * width, [r["input_stdp_acc"] for r in rows], width, label="Input STDP")
-    plt.bar(x + 0.5 * width, [r["full_stdp_acc"] for r in rows], width, label="Full STDP")
-    plt.bar(x + 1.5 * width, [r["raw_acc"] for r in rows], width, label="Raw")
-    plt.xlabel("Seed")
-    plt.ylabel("Accuracy")
-    plt.title("Temporal Classification Accuracies per Seed")
-    plt.xticks(x, seeds)
-    plt.ylim(0, 1)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(artifact_dir / "temporal_feature_comparison.png")
-    plt.close()
-    # Visualise final recurrent weights after full STDP training
-    plt.figure(figsize=(6, 5))
-    plt.imshow(net_full.recurrent_weights, cmap="viridis", interpolation="nearest")
-    plt.colorbar(label="Weight")
-    plt.title("Recurrent Weights after Full STDP Training")
-    plt.tight_layout()
-    plt.savefig(artifact_dir / "weight_evolution.png")
-    plt.close()
+        f.write("\nSTDP & Spiking Diagnostics (per seed):\n")
+        for r in rows:
+            if r["feature"] in ("total", "raw_bins"):
+                f.write(
+                    f"  seed={r['seed']} {r['model']:10s} | spikes={r['train_output_spikes']} "
+                    f"| dW_in={float(r['delta_w_in_norm']):.4f} | dW_rec={float(r['delta_w_rec_norm']):.4f} "
+                    f"| updated={r['stdp_updated']}\n"
+                )
+
+    # 1. Genuine temporal feature comparison plot
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    snn_models = ["fixed", "input_stdp", "full_stdp"]
+    features = ["total", "bins", "latency"]
+    x = np.arange(len(snn_models))
+    width = 0.25
+    for idx, feat in enumerate(features):
+        means = []
+        stds = []
+        for m in snn_models:
+            vals = np.array([float(r["accuracy"]) for r in rows if r["model"] == m and r["feature"] == feat])
+            means.append(float(vals.mean()))
+            stds.append(float(vals.std(ddof=1)) if len(vals) > 1 else 0.0)
+        ax.bar(x + (idx - 1) * width, means, width, yerr=stds, capsize=4, label=feat)
+    raw_vals = np.array([float(r["accuracy"]) for r in rows if r["model"] == "raw"])
+    ax.axhline(float(raw_vals.mean()), color="black", linestyle="--", label=f"raw_bins ({raw_vals.mean():.3f})")
+    ax.axhline(0.5, color="gray", linestyle=":", label="chance (0.500)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(snn_models)
+    ax.set_ylim(0.0, 1.05)
+    ax.set_ylabel("Test Accuracy")
+    ax.set_title("Temporal Feature Representation Comparison Across SNN Models")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(artifact_dir / "temporal_feature_comparison.png")
+    plt.close(fig)
+
+    # 2. Genuine weight evolution across training samples
+    traj_arr = np.array(full_stdp_trajectories, dtype=np.float64)  # (n_seeds, n_train, 2)
+    samples_axis = np.arange(1, traj_arr.shape[1] + 1)
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(samples_axis, traj_arr[:, :, 0].mean(axis=0), label=r"$\|\Delta W_{\mathrm{in}}\|_F$ (mean)")
+    ax.plot(samples_axis, traj_arr[:, :, 1].mean(axis=0), label=r"$\|\Delta W_{\mathrm{rec}}\|_F$ (mean)")
+    ax.set_xlabel("Training Sample Index")
+    ax.set_ylabel("Frobenius Weight Change Norm")
+    ax.set_title("Online STDP Weight Evolution During Training (Full STDP)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(artifact_dir / "weight_evolution.png")
+    plt.close(fig)
+
+    # 3. Confusion matrices aggregated across test predictions
+    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6), constrained_layout=True)
+    for ax, (label, cm) in zip(axes, agg_cms.items()):
+        im = ax.imshow(cm, cmap="Blues", interpolation="nearest")
+        ax.set_title(label)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+        ax.set_xticks([0, 1])
+        ax.set_yticks([0, 1])
+        for i in range(2):
+            for j in range(2):
+                ax.text(j, i, str(cm[i, j]), ha="center", va="center", color="black")
+    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8)
+    fig.suptitle("Aggregated Test Confusion Matrices")
+    fig.savefig(artifact_dir / "confusion_matrix.png")
+    plt.close(fig)
+
     print("Experiment completed. Files written to", artifact_dir)
+    return rows
 
 
 if __name__ == "__main__":

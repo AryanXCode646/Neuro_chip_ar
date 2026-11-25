@@ -20,6 +20,8 @@ Simultaneous spikes:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -60,6 +62,17 @@ class PairSTDP:
         w_max: float = 1.0,
         dt: float = 1.0,
     ) -> None:
+        for name, val in (
+            ("a_plus", a_plus),
+            ("a_minus", a_minus),
+            ("tau_plus", tau_plus),
+            ("tau_minus", tau_minus),
+            ("w_min", w_min),
+            ("w_max", w_max),
+            ("dt", dt),
+        ):
+            if not math.isfinite(float(val)):
+                raise ValueError(f"{name} must be finite, got {val}")
         if n_input <= 0:
             raise ValueError(f"n_input must be positive, got {n_input}")
         if n_output <= 0:
@@ -124,6 +137,8 @@ class PairSTDP:
         w = np.asarray(weights, dtype=np.float64)
         if w.shape != (self.n_output, self.n_input):
             raise ValueError(f"weights shape mismatch: expected ({self.n_output}, {self.n_input}), got {w.shape}")
+        if not np.all(np.isfinite(w)):
+            raise ValueError("weights must contain only finite numerical values")
 
         s_pre = np.asarray(pre_spikes, dtype=np.float64)
         s_post = np.asarray(post_spikes, dtype=np.float64)
@@ -131,6 +146,10 @@ class PairSTDP:
             raise ValueError(f"pre_spikes shape mismatch: expected ({self.n_input},), got {s_pre.shape}")
         if s_post.shape != (self.n_output,):
             raise ValueError(f"post_spikes shape mismatch: expected ({self.n_output},), got {s_post.shape}")
+        if not np.all(np.isfinite(s_pre)) or np.any((s_pre != 0.0) & (s_pre != 1.0)):
+            raise ValueError("pre_spikes must be finite binary indicators (0 or 1)")
+        if not np.all(np.isfinite(s_post)) or np.any((s_post != 0.0) & (s_post != 1.0)):
+            raise ValueError("post_spikes must be finite binary indicators (0 or 1)")
 
         # 1. Decay traces from previous step to current step t
         self.trace_pre *= self.decay_pre
@@ -173,6 +192,12 @@ class PairSTDP:
         np.ndarray, shape (n_output, n_input)
             Final updated weight matrix.
         """
+        w_init = np.asarray(weights, dtype=np.float64)
+        if w_init.shape != (self.n_output, self.n_input):
+            raise ValueError(f"weights shape mismatch: expected ({self.n_output}, {self.n_input}), got {w_init.shape}")
+        if not np.all(np.isfinite(w_init)):
+            raise ValueError("weights must contain only finite numerical values")
+
         pre_arr = np.asarray(pre_spike_train, dtype=np.float64)
         post_arr = np.asarray(post_spike_train, dtype=np.float64)
 
@@ -184,8 +209,12 @@ class PairSTDP:
             )
         if pre_arr.shape[0] != post_arr.shape[0]:
             raise ValueError(f"Timestep count mismatch between pre ({pre_arr.shape[0]}) and post ({post_arr.shape[0]})")
+        if not np.all(np.isfinite(pre_arr)) or np.any((pre_arr != 0.0) & (pre_arr != 1.0)):
+            raise ValueError("pre_spike_train must contain only finite binary indicators (0 or 1)")
+        if not np.all(np.isfinite(post_arr)) or np.any((post_arr != 0.0) & (post_arr != 1.0)):
+            raise ValueError("post_spike_train must contain only finite binary indicators (0 or 1)")
 
-        w = np.copy(weights)
+        w = np.copy(w_init)
         for t in range(pre_arr.shape[0]):
             w = self.step(w, pre_arr[t], post_arr[t])
 
