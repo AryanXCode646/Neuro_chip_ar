@@ -138,8 +138,6 @@ class SoftmaxClassifier:
         return np.argmax(logits, axis=1)
 
 
-
-
 def run_experiment(seeds: List[int]):
     artifact_dir = pathlib.Path(__file__).parent.parent / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)

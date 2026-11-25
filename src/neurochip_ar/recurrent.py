@@ -289,7 +289,6 @@ class RecurrentSpikingNetwork:
                 w_in_hist[t] = self.input_weights
                 w_rec_hist[t] = self.recurrent_weights
 
-
         # Prepare result dict
         result = {
             "spikes": recorded_spikes,

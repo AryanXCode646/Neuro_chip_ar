@@ -63,9 +63,9 @@ $$\frac{dV}{dt} = \frac{V_{\text{rest}} - V + R \cdot I}{\tau_m}$$
 - Euler stability check: rejects configurations where $dt / \tau_m \notin (0, 2)$.
 - `params` property for safe, typed introspection of neuron configuration:
   ```python
-  neuron.params["v_rest"]       # -65.0
+  neuron.params["v_rest"]  # -65.0
   neuron.params["v_threshold"]  # -50.0
-  neuron.params["tau_m"]        # 20.0
+  neuron.params["tau_m"]  # 20.0
   ```
 - `reset()` restores membrane potential to `v_rest` and clears refractory state.
 
@@ -112,7 +112,7 @@ net = RecurrentSpikingNetwork(
     ...,
     enable_stdp=True,
     stdp_input_params={"a_plus": 0.01, "a_minus": 0.012},
-    stdp_rec_params=None,   # or omit entirely
+    stdp_rec_params=None,  # or omit entirely
 )
 # net.stdp_input is a PairSTDP instance
 # net.stdp_rec  is None

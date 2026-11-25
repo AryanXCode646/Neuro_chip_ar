@@ -9,9 +9,8 @@ specified ``DURATION``.
 import numpy as np
 import pytest
 
-# Project imports
-from neurochip_ar.constants import ENCODER_DT_SECONDS, NETWORK_DT_MS
 import examples.temporal_pattern_classification as experiment
+from neurochip_ar.constants import ENCODER_DT_SECONDS, NETWORK_DT_MS
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
 
 
@@ -19,12 +18,14 @@ from neurochip_ar.recurrent import RecurrentSpikingNetwork
 class CallRecorder:
     def __init__(self):
         self.calls = []
+
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         # Return a dummy value if needed; for encoder we need a spike array
         if self._original:
             return self._original(*args, **kwargs)
         return np.zeros((1, 1))
+
     def set_original(self, func):
         self._original = func
 
@@ -33,6 +34,7 @@ def test_experiment_time_units(monkeypatch):
     # Record constructor dt values
     init_dts = []
     orig_init = RecurrentSpikingNetwork.__init__
+
     def init_wrapper(self, *args, **kwargs):
         init_dts.append(kwargs.get("dt"))
         orig_init(self, *args, **kwargs)
@@ -40,6 +42,7 @@ def test_experiment_time_units(monkeypatch):
     # Record run calls (network dt and number of steps)
     run_calls = []
     orig_run = RecurrentSpikingNetwork.run
+
     def run_wrapper(self, input_spikes, *args, **kwargs):
         run_calls.append((self.dt, input_spikes.shape[0]))
         return orig_run(self, input_spikes, *args, **kwargs)
@@ -47,6 +50,7 @@ def test_experiment_time_units(monkeypatch):
     # Record encoder dt values
     encoder_dts = []
     orig_encoder = experiment.poisson_rate_encoder
+
     def encoder_wrapper(rate, dt, seed=None):
         encoder_dts.append(dt)
         return orig_encoder(rate, dt=dt, seed=seed)

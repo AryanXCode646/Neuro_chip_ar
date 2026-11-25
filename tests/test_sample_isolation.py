@@ -103,9 +103,9 @@ def test_recurrent_stdp_traces_cleared():
     pattern = np.ones((50, 2))
     spikes = _spike_train(pattern)
     net.run(spikes, record_weight_history=False)
-    assert (
-        net.stdp_rec.trace_pre.sum() != 0.0 or net.stdp_rec.trace_post.sum() != 0.0
-    ), "Recurrent STDP traces did not update"
+    assert net.stdp_rec.trace_pre.sum() != 0.0 or net.stdp_rec.trace_post.sum() != 0.0, (
+        "Recurrent STDP traces did not update"
+    )
     net.reset()
     assert np.allclose(net.stdp_rec.trace_pre, 0.0), "Recurrent STDP trace_pre not cleared on reset"
     assert np.allclose(net.stdp_rec.trace_post, 0.0), "Recurrent STDP trace_post not cleared on reset"

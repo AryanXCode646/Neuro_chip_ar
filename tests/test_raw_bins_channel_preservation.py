@@ -2,6 +2,7 @@
 """Test that raw_bins preserves channel and bin identity."""
 
 import numpy as np
+
 from neurochip_ar.temporal_features import raw_bins
 
 

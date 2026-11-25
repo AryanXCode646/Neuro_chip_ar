@@ -19,6 +19,7 @@ input spike generation.
 from __future__ import annotations
 
 import numpy as np
+
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
 
 __all__ = ["extract_total", "extract_bins", "extract_latency", "raw_bins"]
@@ -68,8 +69,6 @@ def extract_total(*args, **kwargs) -> np.ndarray:
     return arr[0] if arr.shape[0] == 1 else arr
 
 
-
-
 def raw_bins(rates: list[np.ndarray], bins: int = 4) -> np.ndarray:
     """Baseline: sum rates in equal‑duration windows across all channels.
 
@@ -110,6 +109,7 @@ def raw_bins(rates: list[np.ndarray], bins: int = 4) -> np.ndarray:
         feats.append(np.concatenate(per_bin).astype(np.float64))
     return np.stack(feats)
 
+
 def extract_bins(*args, bins: int = 4) -> np.ndarray:
     """Extract binned spike count features.
 
@@ -141,8 +141,6 @@ def extract_bins(*args, bins: int = 4) -> np.ndarray:
     return arr[0] if arr.shape[0] == 1 else arr
 
 
-
-
 def extract_latency(*args, **kwargs) -> np.ndarray:
     """Return first‑spike latency per neuron.
 
@@ -167,4 +165,3 @@ def extract_latency(*args, **kwargs) -> np.ndarray:
         feats.append(first)
     arr = np.stack(feats)
     return arr[0] if arr.shape[0] == 1 else arr
-
