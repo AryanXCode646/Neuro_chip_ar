@@ -56,7 +56,7 @@ _SPLIT_TEST = 2
 
 
 def _derive_seed_sequence(root_seed: int, *keys: int) -> np.random.SeedSequence:
-    """Derive a deterministic, collision-free SeedSequence from *root_seed* and integer keys."""
+    """Derive deterministic, independently keyed NumPy random streams from *root_seed* and integer namespaces."""
     return np.random.SeedSequence([int(root_seed), *(int(k) for k in keys)])
 
 
@@ -163,11 +163,20 @@ def build_dataset(
 
 def init_sparse_ring(n_neurons: int, seed: int | np.random.SeedSequence, base_weight: float = 0.4) -> np.ndarray:
     """Create a directed ring connectivity matrix (no self-connections)."""
+    n_neurons = _validate_int_non_bool(n_neurons, "n_neurons")
+    if n_neurons < 2:
+        raise ValueError(f"n_neurons must be at least 2 for a directed ring without self-connections, got {n_neurons}")
+    if isinstance(base_weight, bool) or not isinstance(base_weight, (int, float, np.number)):
+        raise TypeError(f"base_weight must be a real number, got {type(base_weight).__name__}")
+    weight = float(base_weight)
+    if not math.isfinite(weight) or weight < 0.0:
+        raise ValueError(f"base_weight must be finite and non-negative, got {base_weight}")
+
     rng = np.random.default_rng(seed)
     w = np.zeros((n_neurons, n_neurons), dtype=np.float64)
     for i in range(n_neurons):
         j = (i + 1) % n_neurons
-        w[i, j] = base_weight * rng.uniform(0.8, 1.2)
+        w[i, j] = weight * rng.uniform(0.8, 1.2)
     return w
 
 

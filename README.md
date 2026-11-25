@@ -131,7 +131,7 @@ net = RecurrentSpikingNetwork(
 - `reset()` clears membrane potentials, synaptic currents, previous spikes, and STDP traces — **without** touching learned weights.
 - `run(spikes, record_weight_history=True)` returns a dict with `spikes`, `voltages`, `i_syn`, and optionally `weight_history`.
 
-### 6. Temporal Feature Extraction — `neurochip_ar.temporal_features` *(v0.3)*
+### 6. Temporal Feature Extraction — `neurochip_ar.temporal_features` *(Roadmap milestone v0.3)*
 
 Three deterministic feature extractors for spike-train analysis:
 
@@ -147,7 +147,7 @@ All three functions accept either:
 
 ---
 
-## Temporal Pattern Classification Experiment *(v0.2.0)*
+## Temporal Pattern Classification Experiment *(Package v0.2.0)*
 
 `examples/temporal_pattern_classification.py` demonstrates a complete temporal learning pipeline:
 
@@ -162,7 +162,7 @@ All three functions accept either:
 | Validation | 30 | 30 | 60 |
 | Testing | 30 | 30 | 60 |
 
-- Deterministic via independent `numpy.random.SeedSequence` streams per seed, namespace, split/class, and sample; no cross-partition or cross-seed pattern overlap.
+- Deterministic via independently keyed `numpy.random.SeedSequence` streams derived from each root seed, integer namespace, split/class, and sample index. Regression tests verify deterministic dataset generation, within-experiment partition separation, and pairwise pattern separation across the ten reported experiment seeds.
 
 ### Evaluated configurations
 - **Fixed weights** — no STDP; random initialisation.
@@ -289,7 +289,9 @@ ruff format --check src/neurochip_ar tests examples
 
 ---
 
-## Current Status — v0.2.0
+## Current Status — Package v0.2.0 (Roadmap Milestone v0.3)
+
+> **Versioning note:** `pyproject.toml` declares package version `0.2.0` (no formal Git release tags have been published yet); `v0.1`–`v0.3` in the roadmap below denote internal development milestones.
 
 ### Implemented
 - Forward Euler LIF neuron with absolute refractory period and stability validation.
@@ -311,6 +313,8 @@ ruff format --check src/neurochip_ar tests examples
 ---
 
 ## Roadmap
+
+Development milestones (current package metadata version in `pyproject.toml` is `0.2.0`):
 
 - [x] **v0.1** — LIF neuron, Poisson encoding, feed-forward network, pair-based STDP.
 - [x] **v0.2** — Recurrent network, one-step delayed feedback, online STDP.

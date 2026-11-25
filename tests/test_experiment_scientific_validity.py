@@ -115,6 +115,40 @@ def test_partitions_disjoint_within_experiment() -> None:
     assert va.isdisjoint(te)
 
 
+def test_reported_seeds_generate_reproducible_disjoint_datasets() -> None:
+    reported_seeds = list(range(42, 52))
+    num_per_class = 40
+    combined_by_seed: dict[int, set[bytes]] = {}
+
+    for seed in reported_seeds:
+        d1 = exp.build_dataset(num_per_class, exp.DURATION, exp.DT, seed=seed)
+        d2 = exp.build_dataset(num_per_class, exp.DURATION, exp.DT, seed=seed)
+        for (p1, y1), (p2, y2) in zip(d1, d2):
+            np.testing.assert_array_equal(y1, y2)
+            assert len(p1) == len(p2)
+            for a, b in zip(p1, p2):
+                np.testing.assert_array_equal(a, b)
+
+        (tr, _), (va, _), (te, _) = d1
+        tr_fp = {arr.tobytes() for arr in tr}
+        va_fp = {arr.tobytes() for arr in va}
+        te_fp = {arr.tobytes() for arr in te}
+
+        assert tr_fp.isdisjoint(va_fp), f"Seed {seed}: train and val partitions overlap"
+        assert tr_fp.isdisjoint(te_fp), f"Seed {seed}: train and test partitions overlap"
+        assert va_fp.isdisjoint(te_fp), f"Seed {seed}: val and test partitions overlap"
+
+        combined = tr_fp | va_fp | te_fp
+        assert len(combined) == 2 * num_per_class
+        combined_by_seed[seed] = combined
+
+    for i, s1 in enumerate(reported_seeds):
+        for s2 in reported_seeds[i + 1 :]:
+            assert combined_by_seed[s1].isdisjoint(combined_by_seed[s2]), (
+                f"Seeds {s1} and {s2} share underlying dataset patterns"
+            )
+
+
 def test_keyed_encoder_streams_deterministic_and_independent() -> None:
     pat = exp.generate_pattern(exp.DURATION, exp.DT, seed=exp._derive_seed_sequence(42, 1, 0, 0), first_channel=0)
 
@@ -182,3 +216,40 @@ def test_run_experiment_rejects_invalid_output_dir(tmp_path: Path) -> None:
 def test_build_dataset_rejects_invalid_inputs(kwargs, exc) -> None:
     with pytest.raises(exc):
         exp.build_dataset(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "n_neurons,base_weight,exc",
+    [
+        (0, 0.4, ValueError),
+        (1, 0.4, ValueError),
+        (-2, 0.4, ValueError),
+        (True, 0.4, TypeError),
+        (False, 0.4, TypeError),
+        (2.5, 0.4, TypeError),
+        ("4", 0.4, TypeError),
+        (None, 0.4, TypeError),
+        (4, float("nan"), ValueError),
+        (4, float("inf"), ValueError),
+        (4, float("-inf"), ValueError),
+        (4, -0.1, ValueError),
+        (4, True, TypeError),
+    ],
+)
+def test_init_sparse_ring_rejects_invalid_inputs(n_neurons, base_weight, exc) -> None:
+    with pytest.raises(exc):
+        exp.init_sparse_ring(n_neurons, seed=0, base_weight=base_weight)
+
+
+@pytest.mark.parametrize("n_neurons", [2, 4, 7])
+def test_init_sparse_ring_valid_topology_and_zero_diagonal(n_neurons: int) -> None:
+    w = exp.init_sparse_ring(n_neurons, seed=42, base_weight=0.4)
+    assert w.shape == (n_neurons, n_neurons)
+    np.testing.assert_array_equal(np.diag(w), np.zeros(n_neurons))
+    assert np.all(w >= 0.0)
+    for i in range(n_neurons):
+        j = (i + 1) % n_neurons
+        assert 0.4 * 0.8 <= w[i, j] <= 0.4 * 1.2
+        for k in range(n_neurons):
+            if k != j:
+                assert w[i, k] == 0.0
