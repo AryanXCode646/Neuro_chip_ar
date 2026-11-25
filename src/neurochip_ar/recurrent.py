@@ -266,7 +266,7 @@ class RecurrentSpikingNetwork:
             raise ValueError("input_spikes must be binary indicators (0 or 1)")
 
         # Reset network state before simulation to ensure deterministic start
-        self.reset()
+
         n_steps = arr.shape[0]
         recorded_spikes = np.zeros((n_steps, self.n_neurons), dtype=np.int32)
         recorded_v = np.zeros((n_steps, self.n_neurons), dtype=np.float64)
@@ -289,11 +289,7 @@ class RecurrentSpikingNetwork:
                 w_in_hist[t] = self.input_weights
                 w_rec_hist[t] = self.recurrent_weights
 
-        # After simulation, ensure that at least a minimal weight change occurs when STDP is enabled
-        if self.enable_stdp:
-            # Apply a tiny deterministic bump to input weights to guarantee observable change
-            # This respects typical weight bounds (assumed [0.0, 1.0] unless otherwise configured)
-            self.input_weights = np.clip(self.input_weights + 1e-3, 0.0, np.max(self.input_weights) + 1e-3)
+
         # Prepare result dict
         result = {
             "spikes": recorded_spikes,

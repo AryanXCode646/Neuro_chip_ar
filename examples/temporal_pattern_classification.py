@@ -23,7 +23,7 @@ import numpy as np
 from neurochip_ar.constants import NETWORK_DT_MS
 from neurochip_ar.encoding import poisson_rate_encoder
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
-from neurochip_ar.temporal_features import extract_total
+from neurochip_ar.temporal_features import extract_total, raw_bins
 
 # Constants (also used by tests)
 DURATION = 0.1
@@ -138,21 +138,6 @@ class SoftmaxClassifier:
         return np.argmax(logits, axis=1)
 
 
-def raw_bins(rates: List[np.ndarray], bins: int = 4) -> np.ndarray:
-    """Baseline: sum rates in equal‑duration windows across all channels."""
-    # Preserve channel identity: sum within each bin per channel and flatten.
-    n_steps = rates[0].shape[0]
-    edges = np.linspace(0, n_steps, bins + 1, dtype=int)
-    feats = []
-    for r in rates:
-        # r shape: (time, channel)
-        per_bin = []
-        for i in range(bins):
-            bin_slice = r[edges[i] : edges[i + 1]]  # shape (bin_len, n_channels)
-            per_bin.append(bin_slice.sum(axis=0))  # sum over time, keep channel dimension
-        # Concatenate channel sums for all bins into a 1‑D feature vector
-        feats.append(np.concatenate(per_bin).astype(np.float64))
-    return np.stack(feats)
 
 
 def run_experiment(seeds: List[int]):

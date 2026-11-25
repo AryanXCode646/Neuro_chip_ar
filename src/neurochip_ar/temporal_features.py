@@ -19,10 +19,9 @@ input spike generation.
 from __future__ import annotations
 
 import numpy as np
-
 from neurochip_ar.recurrent import RecurrentSpikingNetwork
 
-__all__ = ["extract_total", "extract_bins", "extract_latency"]
+__all__ = ["extract_total", "extract_bins", "extract_latency", "raw_bins"]
 
 
 def _run_network(net: RecurrentSpikingNetwork, spikes: np.ndarray) -> np.ndarray:
@@ -68,38 +67,48 @@ def extract_total(*args, **kwargs) -> np.ndarray:
     arr = np.stack(feats)
     return arr[0] if arr.shape[0] == 1 else arr
 
-    """Return total spike counts per neuron for each sample.
 
-    If *net* is None, compute directly from the binary spike matrix.
+
+
+def raw_bins(rates: list[np.ndarray], bins: int = 4) -> np.ndarray:
+    """Baseline: sum rates in equal‑duration windows across all channels.
+
+    Validation:
+    - ``rates`` must be a non‑empty list of 2‑D ``np.ndarray``
+    - all arrays must have the same shape ``(time, channels)``
+    - ``bins`` must be a positive integer
+    - each array must have at least one timestep and one channel
+
+    The function preserves channel identity by summing within each bin per channel and flattening.
+    Returns an array of shape ``(n_samples, n_channels * bins)``.
     """
-    spikes_list = _ensure_list(spikes_input)
+    # ---- validation ----
+    if not isinstance(rates, list) or len(rates) == 0:
+        raise ValueError("rates must be a non‑empty list of 2‑D ndarrays")
+    if not isinstance(bins, int) or bins <= 0:
+        raise ValueError("bins must be a positive integer")
+    # Check each sample
+    first_shape = None
+    for idx, r in enumerate(rates):
+        if not isinstance(r, np.ndarray) or r.ndim != 2:
+            raise ValueError(f"rate at index {idx} is not a 2‑D ndarray")
+        if r.shape[0] == 0 or r.shape[1] == 0:
+            raise ValueError("each rate must have at least one timestep and one channel")
+        if first_shape is None:
+            first_shape = r.shape
+        elif r.shape != first_shape:
+            raise ValueError("all rate arrays must have the same shape")
+    # ---- computation ----
+    n_steps = rates[0].shape[0]
+    edges = np.linspace(0, n_steps, bins + 1, dtype=int)
     feats = []
-    for s in spikes_list:
-        if net is not None:
-            out_spikes = _run_network(net, s)
-            feats.append(out_spikes.sum(axis=0))
-        else:
-            feats.append(s.sum(axis=0))
-    arr = np.stack(feats)
-    return arr[0] if arr.shape[0] == 1 else arr
-
-    """Return total spike counts per neuron for each sample.
-
-    Parameters
-    ----------
-    net: RecurrentSpikingNetwork
-        Network with learned weights already configured.
-    spikes_input: np.ndarray or list of np.ndarray
-        Each element is a binary spike train of shape ``(T, n_input)``.
-    """
-    spikes_list = _ensure_list(spikes_input)
-    feats = []
-    for s in spikes_list:
-        out_spikes = _run_network(net, s)
-        feats.append(out_spikes.sum(axis=0))
-    arr = np.stack(feats)
-    return arr[0] if arr.shape[0] == 1 else arr
-
+    for r in rates:
+        per_bin = []
+        for i in range(bins):
+            bin_slice = r[edges[i] : edges[i + 1]]
+            per_bin.append(bin_slice.sum(axis=0))  # sum over time, keep channel dimension
+        feats.append(np.concatenate(per_bin).astype(np.float64))
+    return np.stack(feats)
 
 def extract_bins(*args, bins: int = 4) -> np.ndarray:
     """Extract binned spike count features.
@@ -131,22 +140,7 @@ def extract_bins(*args, bins: int = 4) -> np.ndarray:
     arr = np.stack(feats)
     return arr[0] if arr.shape[0] == 1 else arr
 
-    """Extract binned spike count features.
 
-    Returns a 1‑D array for a single input or a 2‑D array ``(N_samples, n_neurons * bins)``.
-    """
-    spikes_list = _ensure_list(spikes_input)
-    feats = []
-    for s in spikes_list:
-        out_spikes = _run_network(net, s)
-        n_steps = out_spikes.shape[0]
-        edges = np.linspace(0, n_steps, bins + 1, dtype=int)
-        bvec = []
-        for i in range(bins):
-            bvec.append(out_spikes[edges[i] : edges[i + 1]].sum(axis=0))
-        feats.append(np.concatenate(bvec))
-    arr = np.stack(feats)
-    return arr[0] if arr.shape[0] == 1 else arr
 
 
 def extract_latency(*args, **kwargs) -> np.ndarray:
@@ -173,17 +167,4 @@ def extract_latency(*args, **kwargs) -> np.ndarray:
         feats.append(first)
     arr = np.stack(feats)
     return arr[0] if arr.shape[0] == 1 else arr
-    """Return first‑spike latency per neuron.
 
-    Silent neurons receive a latency equal to the total number of timesteps.
-    """
-    spikes_list = _ensure_list(spikes_input)
-    feats = []
-    for s in spikes_list:
-        out_spikes = _run_network(net, s)
-        first = np.argmax(out_spikes, axis=0)
-        silent = out_spikes.sum(axis=0) == 0
-        first = np.where(silent, out_spikes.shape[0], first).astype(np.float64)
-        feats.append(first)
-    arr = np.stack(feats)
-    return arr[0] if arr.shape[0] == 1 else arr

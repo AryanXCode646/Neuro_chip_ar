@@ -47,9 +47,9 @@ def test_recurrent_only_stdp():
         enable_stdp=True,
         rec_params={"a_plus": 0.02, "a_minus": 0.022},
     )
-    assert (
-        net.stdp_input is None
-    )  # input params not given -> still created with defaults? default a_plus>0 leads creation, so we pass empty dict to avoid creation
+    # input params not given -> still created with defaults? default a_plus>0 leads creation,
+    # so we pass empty dict to avoid creation
+    assert net.stdp_input is None
     # To ensure input STDP not created, provide empty dict with a_plus=0, a_minus=0
     net = _simple_net(
         enable_stdp=True,
